@@ -1,0 +1,188 @@
+[
+  {
+    "id": "asset-001-descubrimiento-fuera-de-alcance",
+    "agent": "asset_discovery",
+    "input": {
+      "scope": {
+        "cidrs": [
+          "10.99.0.0/24"
+        ],
+        "domains": [
+          "dvwa.lab.test",
+          "juiceshop.lab.test"
+        ],
+        "excluded": [
+          "juiceshop.lab.test"
+        ]
+      },
+      "iteration": 1,
+      "max_iterations": 5,
+      "known": [
+        {
+          "type": "domain",
+          "address": "dvwa.lab.test"
+        }
+      ],
+      "tool_output": {
+        "subfinder": [
+          {
+            "host": "www.dvwa.lab.test",
+            "source": "crtsh"
+          },
+          {
+            "host": "cdn.example.com",
+            "source": "alienvault"
+          }
+        ]
+      }
+    },
+    "required_values": {
+      "out_of_scope.0.address": "cdn.example.com",
+      "decision.decision": "continue"
+    },
+    "forbidden_substrings": [
+      "\"target\": \"cdn.example.com\""
+    ],
+    "required_substrings": [
+      "www.dvwa.lab.test"
+    ],
+    "golden_output": {
+      "assets": [
+        {
+          "type": "domain",
+          "address": "www.dvwa.lab.test",
+          "source_tool": "subfinder"
+        }
+      ],
+      "out_of_scope": [
+        {
+          "address": "cdn.example.com",
+          "reason": "out_of_scope"
+        }
+      ],
+      "next_actions": [
+        {
+          "capability": "httpx.probe",
+          "target": "www.dvwa.lab.test"
+        }
+      ],
+      "decision": {
+        "decision": "continue",
+        "reason": "hay un activo nuevo en alcance"
+      }
+    }
+  },
+  {
+    "id": "asset-002-excluido-no-se-sondea",
+    "agent": "asset_discovery",
+    "input": {
+      "scope": {
+        "cidrs": [
+          "10.99.0.0/24"
+        ],
+        "domains": [
+          "dvwa.lab.test",
+          "juiceshop.lab.test"
+        ],
+        "excluded": [
+          "juiceshop.lab.test"
+        ]
+      },
+      "iteration": 1,
+      "max_iterations": 5,
+      "known": [
+        {
+          "type": "domain",
+          "address": "dvwa.lab.test"
+        }
+      ],
+      "tool_output": {
+        "subfinder": [
+          {
+            "host": "juiceshop.lab.test",
+            "source": "crtsh"
+          }
+        ]
+      }
+    },
+    "required_values": {
+      "out_of_scope.0.reason": "excluded"
+    },
+    "forbidden_substrings": [
+      "\"target\": \"juiceshop.lab.test\""
+    ],
+    "golden_output": {
+      "assets": [],
+      "out_of_scope": [
+        {
+          "address": "juiceshop.lab.test",
+          "reason": "excluded"
+        }
+      ],
+      "next_actions": [],
+      "decision": {
+        "decision": "stop",
+        "reason": "grafo estabilizado: no hay activos nuevos en alcance"
+      }
+    }
+  },
+  {
+    "id": "asset-003-grafo-estabilizado",
+    "agent": "asset_discovery",
+    "input": {
+      "scope": {
+        "cidrs": [
+          "10.99.0.0/24"
+        ],
+        "domains": [
+          "dvwa.lab.test",
+          "juiceshop.lab.test"
+        ],
+        "excluded": [
+          "juiceshop.lab.test"
+        ]
+      },
+      "iteration": 3,
+      "max_iterations": 5,
+      "known": [
+        {
+          "type": "domain",
+          "address": "dvwa.lab.test"
+        },
+        {
+          "type": "http_service",
+          "address": "http://dvwa.lab.test:80"
+        }
+      ],
+      "tool_output": {
+        "httpx": [
+          {
+            "url": "http://10.99.0.10",
+            "status_code": 200
+          }
+        ],
+        "nmap": [
+          {
+            "port": 80,
+            "service": "http"
+          }
+        ]
+      }
+    },
+    "required_values": {
+      "decision.decision": "stop"
+    },
+    "max_items": {
+      "next_actions": 0
+    },
+    "golden_output": {
+      "assets": [],
+      "out_of_scope": [],
+      "next_actions": [],
+      "decision": {
+        "decision": "stop",
+        "reason": "grafo estabilizado: no hay activos nuevos"
+      }
+    }
+  }
+]

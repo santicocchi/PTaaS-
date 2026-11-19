@@ -10,7 +10,11 @@
       "tool_output": {
         "zap": [
           {
-            "alert": "CSP Header Not Set"
+            "pluginId": "10038",
+            "alert": "CSP Header Not Set",
+            "url": "http://dvwa.lab.test:80/",
+            "risk": "Medium",
+            "confidence": "High"
           }
         ]
       }
