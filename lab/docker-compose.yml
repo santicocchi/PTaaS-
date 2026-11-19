@@ -34,14 +34,63 @@ services:
     # deja de ser escribible en Linux. El código igual no se puede modificar por el montaje.
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
+      # Clave de la API de ZAP (change 005). No va al repo: se define en lab/.env (ver README).
+      PTAAS_ZAP_API_KEY: ${PTAAS_ZAP_API_KEY:?definí PTAAS_ZAP_API_KEY en lab/.env}
     volumes:
       - ..:/work:ro
       - ../demo/out:/work/demo/out
     command: sleep infinity
     networks:
-      - lab
+      lab:
+      tools:
+        ipv4_address: 10.97.0.10
+
+  zap:
+    # ZAP 2.17.0 en modo daemon (change 005, D7). Llega a los objetivos por la red `lab`, pero su
+    # API escucha SOLO en la red `tools` y solo acepta llamadas del runner (10.97.0.10) dirigidas
+    # a su propia dirección (10.97.0.20).
+    # Arranca sin las reglas activas (ascanrules), sin fuzzer, sin fuerza bruta y sin OAST.
+    # `-silent`: ZAP no hace pedidos propios (chequeo de versiones, noticias).
+    image: zaproxy/zap-stable@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af
+    command:
+      - zap.sh
+      - -daemon
+      - -silent
+      - -host
+      - 10.97.0.20
+      - -port
+      - "8080"
+      - -config
+      - api.key=${PTAAS_ZAP_API_KEY:?definí PTAAS_ZAP_API_KEY en lab/.env}
+      # ZAP exige que el cliente Y el encabezado Host estén permitidos (defensa contra rebinding).
+      - -config
+      - api.addrs.addr(0).name=10.97.0.10
+      - -config
+      - api.addrs.addr(0).regex=false
+      - -config
+      - api.addrs.addr(1).name=10.97.0.20
+      - -config
+      - api.addrs.addr(1).regex=false
+      - -addonuninstall
+      - ascanrules
+      - -addonuninstall
+      - fuzz
+      - -addonuninstall
+      - bruteforce
+      - -addonuninstall
+      - oast
+    networks:
+      lab:
+      tools:
+        ipv4_address: 10.97.0.20
 
 networks:
+  tools:
+    # Red de herramientas (runner ↔ API de ZAP). Fuera de `lab_only_cidrs`: nunca es un objetivo.
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.97.0.0/24
   lab:
     internal: true
     # Subred fija y contenida en targets.lab_only_cidrs (harness/profiles.yaml).

@@ -75,6 +75,15 @@ nuclei:
   timeout_s: 600
   output: jsonl
 
+zap:
+  # ZAP 2.17.0 como servicio del laboratorio (lab/docker-compose.yml), hablado por su API con un
+  # conjunto fijo de endpoints sin escaneo activo (change 005, D7). La clave sale del entorno.
+  api_url: "http://10.97.0.20:8080"
+  api_key_env: PTAAS_ZAP_API_KEY
+  spider: {threads: 1, max_depth: 3, max_duration_min: 1, max_children: 20}
+  max_wait_s: 300
+  poll_s: 2
+
 targets:
   # En desarrollo solo se permiten estos hosts de laboratorio (red aislada).
   lab_only_domains: ["dvwa.lab.test", "juiceshop.lab.test"]

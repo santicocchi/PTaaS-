@@ -6,7 +6,10 @@ from harness.adapters.httpx_adapter import HttpxProbe
 from harness.adapters.nmap_adapter import NmapServiceScan
 from harness.adapters.nuclei_adapter import NucleiSafeTemplates
 from harness.adapters.subfinder_adapter import SubfinderEnum
+from harness.adapters.zap_adapter import ZapBaselineScan
 from harness.contracts import ToolAdapter
+from harness.correlate import CveLookup, CweMap, EpssLookup
 
-ADAPTER_CLASSES: tuple[type[ToolAdapter], ...] = (SubfinderEnum, HttpxProbe, NmapServiceScan,
-                                     NucleiSafeTemplates)
+ADAPTER_CLASSES: tuple[type[ToolAdapter], ...] = (
+    SubfinderEnum, HttpxProbe, NmapServiceScan, NucleiSafeTemplates, ZapBaselineScan,
+    CveLookup, EpssLookup, CweMap)

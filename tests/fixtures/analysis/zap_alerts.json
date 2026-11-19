@@ -1,0 +1,8 @@
+{"alerts": [
+ {"pluginId": "10038", "alert": "Content Security Policy (CSP) Header Not Set", "risk": "Medium", "confidence": "High", "cweid": "693", "wascid": "15", "url": "http://10.99.0.2/", "evidence": "", "param": ""},
+ {"pluginId": "10038", "alert": "Content Security Policy (CSP) Header Not Set", "risk": "Medium", "confidence": "High", "cweid": "693", "wascid": "15", "url": "http://10.99.0.2/", "evidence": "", "param": ""},
+ {"pluginId": "10020", "alert": "Missing Anti-clickjacking Header", "risk": "Medium", "confidence": "Medium", "cweid": "1021", "wascid": "15", "url": "http://10.99.0.2/login.php", "evidence": "", "param": "x-frame-options"},
+ {"pluginId": "10036", "alert": "Server Leaks Version Information via \"Server\" HTTP Response Header Field", "risk": "Low", "confidence": "High", "cweid": "497", "wascid": "13", "url": "http://10.99.0.2/robots.txt", "evidence": "Apache/2.4.25 (Debian)", "param": ""},
+ {"pluginId": "10010", "alert": "Cookie No HttpOnly Flag", "risk": "Low", "confidence": "Medium", "cweid": "1004", "wascid": "13", "url": "http://10.99.0.2/login.php", "evidence": "Set-Cookie: PHPSESSID", "param": "PHPSESSID"},
+ {"pluginId": "10027", "alert": "Information Disclosure - Suspicious Comments", "risk": "Informational", "confidence": "Low", "cweid": "-1", "wascid": "13", "url": "http://10.99.0.2/dvwa/js/x.js", "evidence": "", "param": ""}
+]}
