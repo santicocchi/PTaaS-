@@ -6,9 +6,10 @@ from pathlib import Path
 
 from harness.analysis import AnalysisLoop, FalsePositive, FindingStore, load_equivalences
 from harness.contracts import AuditLog, Guard, Harness, KillSwitch, Phase
+from harness.engagement import State
 from harness.policy_loader import phase_allowlist
 from harness.schemas import CandidateFinding
-from tests.conftest import TEST_ISSUER, make_token
+from tests.conftest import TEST_ISSUER, engagement_in, make_token
 
 DNS = {"dvwa.lab.test": ["10.99.0.2"]}
 
@@ -65,7 +66,8 @@ class Lab:
         self.token = make_token(Phase.ANALYZE, cidrs=("10.99.0.0/24",),
                                 domains=("dvwa.lab.test",))
         self.store = store or FindingStore.open("eng-1", tmp_path)
-        self.loop = AnalysisLoop(self.harness, self.token, self.store,
+        self.engagement = engagement_in(State.ANALYZE)
+        self.loop = AnalysisLoop(self.harness, self.token, self.store, engagement=self.engagement,
                                  asset_of=lambda h: f"asset-{h}", criticality_of=criticality,
                                  equivalences=load_equivalences(),
                                  false_positives=list(fps), max_iterations=max_iterations)

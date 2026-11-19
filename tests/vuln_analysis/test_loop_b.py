@@ -5,6 +5,7 @@ import pytest
 
 from harness.analysis import AnalysisLoop, FindingStore
 from harness.contracts import Phase
+from harness.engagement import Engagement, State
 from tests.conftest import make_token
 from tests.vuln_analysis.helpers import (
     CSP_N,
@@ -121,9 +122,24 @@ def test_exige_token_analyze(tmp_path):
     lab = Lab(tmp_path)
     with pytest.raises(ValueError):
         AnalysisLoop(lab.harness, make_token(Phase.CORRELATE), lab.store,
-                     asset_of=lambda h: h)
+                     engagement=lab.engagement, asset_of=lambda h: h)
 
 
 def test_engagement_id_invalido(tmp_path):
     with pytest.raises(ValueError):
         FindingStore.open("../x", tmp_path)
+
+
+@pytest.mark.parametrize("state", [State.AUTHORIZED, State.RECON, State.CORRELATE])
+def test_sin_engagement_en_analyze_no_se_invoca_nada(tmp_path, state):
+    """Revisión 005, B3: el loop B no salta la máquina de estados ni su gate HITL."""
+    lab = Lab(tmp_path)
+    e = Engagement(roe_valid=True)
+    if state != State.AUTHORIZED:
+        e.approve("first_active_action")
+    while e.state != state:
+        e.advance()
+    lab.loop.engagement = e
+    res = lab.run([version_candidate()])
+    assert res.reason == "engagement fuera de ANALYZE" and lab.log == []
+    assert not [x for x in lab.audit.entries if x["phase"] == "analyze"]

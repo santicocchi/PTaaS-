@@ -60,7 +60,8 @@ def test_contradiccion_en_una_url_y_confirmacion_en_otra(tmp_path):
     login = ("10038", "CWE-693", "http://dvwa.lab.test:80/login.php", "Medium", "High")
     res = Lab(tmp_path, nuclei=[nuclei_out()], zap=[zap_out(CSP_Z, login)]).run()
     v = by_cwe(res)["CWE-693"]
-    assert v.status == "confirmed" and v.needs_review     # la persona igual ve la contradicción
+    assert v.status == "inconclusive" and v.needs_review   # spec: contradicción → inconcluso
+    assert "login.php" in v.rationale and "10038" in v.rationale
 
 
 def test_falso_positivo_conocido_queda_descartado_con_motivo(tmp_path):
@@ -157,3 +158,21 @@ def test_autor_que_se_revisa_a_si_mismo_no_aprueba(tmp_path):
         {"id": "FP-1", "tool": "zap", "check": "1", "url_pattern": "x", "reason": "r",
          "author": "Ana", "reviewer": "ana", "date": "d"}]}))
     assert not load_false_positives(path)[0].approved
+
+
+def test_cve_no_se_confirma_con_evidencia_de_su_cwe(tmp_path):
+    """Revisión 005, B1: que ZAP vea que falta el CSP no prueba un CVE con CWE-693."""
+    res = Lab(tmp_path, nuclei=[nuclei_out(CSP_N)], zap=[zap_out(CSP_Z)]).run(
+        [version_candidate(cwe="CWE-693")])
+    v = next(x for x in res.vulns if x.finding_id == "f-CVE-2099-0001")
+    assert v.status == "inconclusive" and "versión" in v.rationale
+    cwe_only = {c.id for c in res.candidates if c.cve is None and c.cwe == "CWE-693"}
+    assert [x.status for x in res.vulns if x.finding_id in cwe_only] == ["confirmed"]
+
+
+def test_falso_positivo_no_tapa_un_hallazgo_alto_de_nuclei(tmp_path):
+    """Revisión 005, M7: el riesgo de nuclei sale de su severidad, no es siempre Low."""
+    out = nuclei_out(("ptaas-x", "CWE-79", "http://dvwa.lab.test:80/"))
+    out["findings"][0]["severity"] = "high"
+    lab = Lab(tmp_path, nuclei=[out], fps=[fp("ptaas-x", r".*", tool="nuclei")])
+    assert by_cwe(lab.run())["CWE-79"].status == "confirmed"

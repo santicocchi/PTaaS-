@@ -24,6 +24,7 @@ from harness.contracts import (
     ScopeToken,
     ScopeViolation,
 )
+from harness.engagement import Engagement, State
 from harness.feeds import (
     UNKNOWN_CWE,
     Feeds,
@@ -198,10 +199,10 @@ class _Abort(Exception):
 
 
 class Correlator:
-    def __init__(self, harness: Harness, token: ScopeToken) -> None:
+    def __init__(self, harness: Harness, token: ScopeToken, *, engagement: Engagement) -> None:
         if token.phase is not Phase.CORRELATE:
             raise ValueError("la correlación necesita un token de fase CORRELATE")
-        self.harness, self.token = harness, token
+        self.harness, self.token, self.engagement = harness, token, engagement
 
     def _invoke(self, capability: str, host: str) -> dict[str, Any] | None:
         try:
@@ -215,6 +216,8 @@ class Correlator:
             return None                      # host fuera de alcance: no se correlaciona
 
     def run(self, hosts: list[str]) -> CorrelationResult:
+        if self.engagement.state != State.CORRELATE:     # la máquina de estados manda (B3)
+            return CorrelationResult([], "engagement fuera de CORRELATE")
         found: list[CandidateFinding] = []
         synthetic = False
         try:

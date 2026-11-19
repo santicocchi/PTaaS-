@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # 2. Correlación ----------------------------------------------------------------------
     _phase(f"2. Correlación (estado {engagement.advance().value})")
-    corr = Correlator(harness, issuer.issue(roe, Phase.CORRELATE)).run(
+    corr = Correlator(harness, issuer.issue(roe, Phase.CORRELATE), engagement=engagement).run(
         sorted({host_of(a) for a in recon.handoff}))
     if corr.synthetic:
         print(warn("   Snapshot SINTÉTICO: los CVE-2099-… son datos de prueba, no CVE reales."))
@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     for reason in skipped:
         print(dim(f"     - {reason}"))
     store = FindingStore.open(engagement_id, args.out)
-    loop = AnalysisLoop(harness, issuer.issue(roe, Phase.ANALYZE), store,
+    loop = AnalysisLoop(harness, issuer.issue(roe, Phase.ANALYZE), store, engagement=engagement,
                         asset_of=lambda h: (v.asset_id if (v := host_view(graph, h))
                                             else f"host:{h}"),
                         criticality_of=lambda h: criticality_of(roe, h))

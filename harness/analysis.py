@@ -32,6 +32,7 @@ from harness.contracts import (
     ScopeViolation,
 )
 from harness.correlate import candidate_id
+from harness.engagement import Engagement, State
 from harness.loops import decide_detection
 from harness.policy_loader import load_policy
 from harness.schemas import CandidateFinding, PrioritizedVuln, SchemaGate, dedupe, priority_score
@@ -42,6 +43,8 @@ FALSE_POSITIVES = ROOT / "data" / "false_positives.yaml"
 AGENT = "analysis-orchestrator"
 PLAN = ("nuclei.safe_templates", "zap.baseline_scan")
 _FATAL = frozenset({"token_expired", "token_invalid", "token_revoked"})
+_NUCLEI_RISK = {"info": "Low", "low": "Low", "medium": "Medium", "high": "High",
+                "critical": "High"}
 _ZAP_CONFIDENCE = {"Confirmed": "high", "High": "high", "Medium": "medium", "Low": "low"}
 _ENGAGEMENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _FP_FIELDS = ("id", "tool", "check", "url_pattern", "reason", "author", "reviewer", "date")
@@ -192,7 +195,7 @@ class _Abort(Exception):
 
 class AnalysisLoop:
     def __init__(self, harness: Harness, token: ScopeToken, store: FindingStore, *,
-                 asset_of: Callable[[str], str],
+                 engagement: Engagement, asset_of: Callable[[str], str],
                  criticality_of: Callable[[str], tuple[int, bool]] = lambda h: (3, True),
                  equivalences: dict[tuple[str, str], tuple[str, str]] | None = None,
                  false_positives: list[FalsePositive] | None = None,
@@ -200,6 +203,7 @@ class AnalysisLoop:
         if token.phase is not Phase.ANALYZE:
             raise ValueError("el análisis necesita un token de fase ANALYZE")
         self.harness, self.token, self.store = harness, token, store
+        self.engagement = engagement
         self.asset_of, self.criticality_of = asset_of, criticality_of
         self.equivalences = load_equivalences() if equivalences is None else equivalences
         self.false_positives = (load_false_positives() if false_positives is None
@@ -213,6 +217,11 @@ class AnalysisLoop:
 
     # -- ejecución ---------------------------------------------------------------------
     def run(self, candidates: list[CandidateFinding], hosts: list[str]) -> AnalysisResult:
+        # nuclei y el spider de ZAP generan tráfico: sin el engagement en ANALYZE (al que se
+        # llega pasando por el gate first_active_action) no se invoca nada (revisión 005, B3).
+        if self.engagement.state != State.ANALYZE:
+            return AnalysisResult(candidates=list(candidates),
+                                  reason="engagement fuera de ANALYZE")
         all_hosts = sorted(set(hosts) | {c.host for c in candidates if c.host})
         reason = "ok"
         try:
@@ -272,8 +281,9 @@ class AnalysisLoop:
     def _observe(self, host: str, step: int, out: dict[str, Any]) -> None:
         if out.get("tool") == "nuclei":
             for f in out.get("findings") or []:
+                risk = _NUCLEI_RISK.get(str(f.get("severity")), "Low")   # M7: un FP no la tapa
                 self.store.add(Observation(host, step, "nuclei", f["template_id"], f["cwe"],
-                                           f["url"], "high", "Low", "; ".join(f["evidence"])))
+                                           f["url"], "high", risk, "; ".join(f["evidence"])))
             for t in out.get("templates_run") or []:
                 self.store.mark_covered(host, "nuclei", str(t))
         elif out.get("tool") == "zap":
@@ -304,8 +314,12 @@ class AnalysisLoop:
 
     # -- resolución ------------------------------------------------------------------------
     def _resolve(self, c: CandidateFinding) -> tuple[PrioritizedVuln, str]:
-        relevant = [o for o in self.store.observations(c.host)
-                    if c.cwe != "unknown" and o.cwe == c.cwe]
+        # Un candidato por CVE no toma evidencia "por CWE": que ZAP vea que falta el CSP no
+        # prueba un CVE de Apache con ese CWE. Sin una verificación atada al CVE (en el MVP no
+        # hay), queda inconcluso hasta VALIDATE (revisión 005, B1). La evidencia por CWE ya
+        # tiene su propio candidato.
+        relevant = [] if c.cve else [o for o in self.store.observations(c.host)
+                                     if c.cwe != "unknown" and o.cwe == c.cwe]
         history: list[int] = []
         status, rationale, review = "inconclusive", "", False
         decision_reason = "tope de iteraciones alcanzado"
@@ -339,17 +353,18 @@ class AnalysisLoop:
             ids = sorted({fp.id for o in seen if (fp := self._false_positive(o))})
             return ("discarded", f"Falso positivo conocido ({', '.join(ids)}).", False)
         strong = [o for o in seen if o.confidence == "high" and o.url not in contradictions]
-        note = ""
-        if contradictions:
+        if contradictions:                       # la spec manda: inconcluso y a revisión (B4)
             pairs = "; ".join(f"{u}: {v}" for u, v in sorted(contradictions.items()))
-            note = f" Contradicción entre verificaciones equivalentes ({pairs})."
+            text = f"Sin confirmar. Contradicción entre verificaciones equivalentes ({pairs})."
+            if strong:
+                refs = ", ".join(sorted({o.ref for o in strong})[:3])
+                text += (f" Hay evidencia fuerte en otras URL ({refs}), pero no se confirma "
+                         "mientras haya una contradicción.")
+            return ("inconclusive", f"{text} Requiere revisión humana.", True)
         if strong:
             tools = sorted({o.tool for o in strong})
             refs = ", ".join(sorted({o.ref for o in strong})[:3])
-            text = f"Confirmado por {' y '.join(tools)} ({refs}).{note}"
-            return ("confirmed", text, bool(contradictions))
-        if contradictions:
-            return ("inconclusive", f"Sin confirmar.{note} Requiere revisión humana.", True)
+            return ("confirmed", f"Confirmado por {' y '.join(tools)} ({refs}).", False)
         if c.cve and not seen:
             text = ("Solo evidencia de versión: una versión sola no confirma (puede haber "
                     "backport). Se confirma en VALIDATE con el catálogo.")

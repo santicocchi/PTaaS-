@@ -64,3 +64,14 @@ def env():
 
 def act(name, phase, **kw):
     return Action(name, phase, **kw)
+
+
+def engagement_in(state):
+    """Engagement aprobado y avanzado hasta `state` (pasa por el gate first_active_action)."""
+    from harness.engagement import Engagement
+
+    e = Engagement(roe_valid=True)
+    e.approve("first_active_action")
+    while e.state != state:
+        e.advance()
+    return e

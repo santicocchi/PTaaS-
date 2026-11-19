@@ -9,9 +9,10 @@ from pathlib import Path
 from harness.assets import AssetGraph
 from harness.contracts import AuditLog, Guard, Harness, KillSwitch, Phase
 from harness.correlate import CveLookup, CweMap, EpssLookup
+from harness.engagement import State
 from harness.feeds import ALIASES_FILE, FEEDS_DIR, load_feeds
 from harness.policy_loader import phase_allowlist
-from tests.conftest import TEST_ISSUER, make_token
+from tests.conftest import TEST_ISSUER, engagement_in, make_token
 from tools.build_feeds import synthetic, write_manifest
 
 NOW = datetime(2026, 11, 19, 12, 0, tzinfo=UTC)
@@ -58,6 +59,7 @@ class Lab:
         self.harness = Harness(Guard(phase_allowlist()), self.audit, self.adapters,
                                KillSwitch(), TEST_ISSUER,
                                resolver=lambda h: LAB_DNS.get(h, []))
+        self.engagement = engagement_in(State.CORRELATE)
         self.token = make_token(Phase.CORRELATE, cidrs=("10.99.0.0/24",),
                                 domains=("dvwa.lab.test", "web.lab.test"))
 
