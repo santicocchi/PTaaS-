@@ -140,3 +140,10 @@ def test_error_de_herramienta_tipado(tmp_path):
 def test_rate_limit_sale_de_la_politica():
     from harness.policy_loader import load_policy
     assert NucleiSafeTemplates().rps == load_policy()["limits"]["rate_limit_rps_per_target"]
+
+
+def test_resultado_de_un_puerto_no_sondeado_se_descarta():
+    """Revisión 005, M10: el puerto de matched-at tiene que ser uno de los sondeados."""
+    line = '{"template-id":"ptaas-missing-csp","ip":"10.99.0.2","matched-at":"http://10.99.0.2:8443/"}'
+    assert parse_output("dvwa.lab.test", line, ("10.99.0.2",), IDS, (80,))["findings"] == []
+    assert parse_output("dvwa.lab.test", line, ("10.99.0.2",), IDS, (8443,))["findings"]

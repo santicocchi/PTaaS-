@@ -73,7 +73,8 @@ def build_argv(target: str, addresses: tuple[str, ...], templates: Sequence[Path
     return argv
 
 
-def _finding(target: str, allowed_ips: set[str], allowed_ids: set[str]) -> Any:
+def _finding(target: str, allowed_ips: set[str], allowed_ids: set[str],
+             allowed_ports: set[int] | None = None) -> Any:
     def parse(obj: dict[str, Any]) -> dict[str, Any] | None:
         try:
             tid, ip, matched = obj["template-id"], obj["ip"], obj["matched-at"]
@@ -86,6 +87,8 @@ def _finding(target: str, allowed_ips: set[str], allowed_ids: set[str]) -> Any:
                     ipaddress.ip_address(ip)):
                 return None
             port = parts.port or 80
+            if allowed_ports is not None and port not in allowed_ports:
+                return None                               # un puerto que no sondeamos
             raw_info = obj.get("info")
             info: dict[str, Any] = raw_info if isinstance(raw_info, dict) else {}
             raw_class = info.get("classification")
@@ -107,9 +110,9 @@ def _finding(target: str, allowed_ips: set[str], allowed_ids: set[str]) -> Any:
 
 
 def parse_output(target: str, raw: str, addresses: tuple[str, ...],
-                 template_ids: set[str]) -> dict[str, Any]:
+                 template_ids: set[str], ports: Sequence[int] | None = None) -> dict[str, Any]:
     allowed = {str(ipaddress.ip_address(a)) for a in addresses}
-    parse = _finding(target, allowed, template_ids)
+    parse = _finding(target, allowed, template_ids, None if ports is None else set(ports))
     valid, invalid = [], 0
     for line in raw.splitlines():
         if not line.strip():
@@ -148,11 +151,11 @@ class NucleiSafeTemplates:
         if not templates:
             return {"tool": "nuclei", "target": target, "status": "ok", "findings": [],
                     "invalid_lines": 0, "templates_run": [], "skipped": skipped}
-        argv = build_argv(target, addresses, templates, tuple(self._ports_of(target)),
-                          self._profile, rps=self.rps)
+        ports = tuple(self._ports_of(target))
+        argv = build_argv(target, addresses, templates, ports, self._profile, rps=self.rps)
         raw, error = run_tool(self._runner, argv, self._profile["timeout_s"])
         if raw is None:
             return tool_error("nuclei", target, str(error))
         ids = {t.stem for t in templates if _TEMPLATE_ID.match(t.stem)}
         return {"tool": "nuclei", "target": target, "templates_run": sorted(ids),
-                "skipped": skipped, **parse_output(target, raw, addresses, ids)}
+                "skipped": skipped, **parse_output(target, raw, addresses, ids, ports)}

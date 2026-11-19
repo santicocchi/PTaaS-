@@ -116,12 +116,17 @@ def problems(path: Path, exclude_tags: set[str] | None = None) -> list[str]:
             found.append("redirecciones activadas")
         if "body" in req:
             found.append("request con cuerpo")
+        headers = req.get("headers")
+        if isinstance(headers, dict) and any(str(k).strip().lower() == "host" for k in headers):
+            found.append("fija su propio Host")      # el Host lo fija el adaptador (D7)
         for p in req.get("path") or []:
             if not str(p).startswith("{{BaseURL}}/"):
                 found.append(f"ruta fuera del objetivo: {p}")
     raw_info = data.get("info")
     info: dict[str, Any] = raw_info if isinstance(raw_info, dict) else {}
-    tags = {t.strip() for t in str(info.get("tags", "")).split(",") if t.strip()}
+    raw_tags = info.get("tags", "")
+    items = raw_tags if isinstance(raw_tags, list) else str(raw_tags).split(",")
+    tags = {str(t).strip().lower() for t in items if str(t).strip()}   # nuclei acepta lista
     if tags & excluded:
         found.append(f"tags excluidas: {sorted(tags & excluded)}")
     if "interactsh" in text.lower() or "oast" in tags:

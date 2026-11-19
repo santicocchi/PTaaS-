@@ -56,6 +56,12 @@ def test_revisor_distinto_del_autor():
     (lambda s: s + "code:\n  - engine: [sh]\n", "no permitidas"),
     (lambda s: s.replace("status: [200]", "words: ['{{interactsh-url}}']"), "OAST"),
     (lambda s: s.replace("id: t-", "id: otro-"), "id"),
+    # revisión 005, M4: tags en forma de lista y Host propio
+    (lambda s: s.replace("tags: headers", "tags: [headers, intrusive]"), "excluidas"),
+    (lambda s: s.replace("tags: headers", "tags:\n    - oast"), "OAST"),
+    (lambda s: s.replace("    path:", "    headers:\n      Host: 203.0.113.7\n    path:"),
+     "Host"),
+    (lambda s: s.replace("    path:", "    headers:\n      HOST: x\n    path:"), "Host"),
 ])
 def test_control_estatico_rechaza(tmp_path, change, fragment):
     path = tmp_path / "t-x.yaml"
