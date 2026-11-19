@@ -24,3 +24,6 @@
 - [ ] 4.4 Test: dos iteraciones sin evidencia nueva → `inconclusive`
 - [ ] 4.5 Evals de correlación y análisis ampliadas (≥ 10 casos en conjunto)
 - [ ] 4.6 Archivar deltas en `openspec/specs/`
+
+## Agregado por el red team (009)
+- [ ] 4.1 `nuclei.safe_templates` y `zap.baseline_scan` reciben un host canónico (no URL): el adaptador arma la URL desde el host autorizado y un esquema/puerto del perfil

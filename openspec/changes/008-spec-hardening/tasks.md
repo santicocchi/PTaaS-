@@ -15,4 +15,4 @@
 
 ## Verificación
 - [x] 3.1 Mutation check de cada Requirement nuevo (romper → test rojo)
-- [ ] 3.2 Archivar los deltas en `openspec/specs/`
+- [x] 3.2 Archivar los deltas en `openspec/specs/`

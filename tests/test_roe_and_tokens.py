@@ -20,7 +20,7 @@ from harness.contracts import (
 from harness.policy_loader import load_policy, phase_allowlist
 from harness.roe import RoEError, parse_roe, roe_digest
 from harness.tokens import TokenIssuer
-from tests.conftest import FakeAdapter, act
+from tests.conftest import FakeAdapter, act, fake_dns
 
 ROOT = Path(__file__).parents[1]
 NOW = datetime(2026, 11, 20, 15, 0, tzinfo=UTC)          # 12:00 en Buenos Aires
@@ -64,7 +64,8 @@ def issuer(audit):
 
 def _harness(issuer, audit):
     adapters = {"httpx.probe": FakeAdapter("httpx.probe", (Phase.RECON,))}
-    return Harness(Guard(phase_allowlist()), audit, adapters, KillSwitch(), issuer), adapters
+    return Harness(Guard(phase_allowlist()), audit, adapters, KillSwitch(), issuer,
+                   resolver=fake_dns), adapters
 
 
 # --- RoE completo y aprobado -------------------------------------------------

@@ -27,6 +27,11 @@ class FakeAdapter:
         return {"ok": True, "target": target}
 
 
+def fake_dns(host: str) -> list[str]:
+    """DNS de prueba: todo hostname resuelve a una IP dentro del alcance por defecto."""
+    return ["10.0.0.50"]
+
+
 def make_token(phase=Phase.RECON, cidrs=("10.0.0.0/24",), domains=("lab.example.test",),
                start=None, end=None, engagement_id="eng-1"):
     now = time.time()
@@ -52,7 +57,7 @@ def env():
         "poc_catalog.run_parametrized": FakeAdapter("poc_catalog.run_parametrized",
                                                     (Phase.VALIDATE,)),
     }
-    return Harness(guard, audit, adapters, ks, TEST_ISSUER), guard, audit, ks, adapters
+    return Harness(guard, audit, adapters, ks, TEST_ISSUER, resolver=fake_dns), guard, audit, ks, adapters
 
 
 def act(name, phase, **kw):

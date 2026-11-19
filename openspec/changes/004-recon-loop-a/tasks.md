@@ -20,3 +20,7 @@
 - [ ] 3.4 Test: el adaptador respeta el rate limit
 - [ ] 3.5 Corrida real contra el lab y bitácora verificada con `audit verify`
 - [ ] 3.6 Archivar deltas en `openspec/specs/`
+
+## Agregado por el red team (009)
+- [ ] 4.1 A5: los adaptadores HTTP NO DEBEN seguir redirecciones fuera de alcance (test con fixture de 302 a otro host)
+- [ ] 4.2 DNS rebinding: pasar al adaptador la IP ya validada por el Harness (p. ej. `--resolve`) en lugar de dejar que la herramienta resuelva

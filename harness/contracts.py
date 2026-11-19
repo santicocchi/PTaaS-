@@ -11,8 +11,9 @@ import hashlib
 import ipaddress
 import json
 import re
+import socket
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol
@@ -76,8 +77,20 @@ BLOCK_REASONS = frozenset({
     "out_of_scope", "token_expired", "token_invalid", "wrong_phase",
     "not_allowlisted", "destructive", "no_adapter", "adapter_phase",
     "token_revoked", "excluded", "roe_invalid", "roe_tampered", "phase_not_in_roe",
-    "outside_window",
+    "outside_window", "dns_out_of_scope", "dns_unresolved",
 })
+
+Resolver = Callable[[str], list[str]]
+
+
+def system_resolver(host: str) -> list[str]:
+    """Todas las IP (A y AAAA) de `host`. Lista vacía si no resuelve."""
+    try:
+        # Con punto final: sin dominios de búsqueda de resolv.conf.
+        infos = socket.getaddrinfo(host.rstrip(".") + ".", None, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError, OSError):
+        return []
+    return sorted({str(info[4][0]) for info in infos})
 
 
 def normalize_target(target: str) -> str | None:
@@ -109,9 +122,16 @@ class Guard:
     """Autorización determinista. Sin LLM, sin heurísticas."""
 
     def __init__(self, phase_allowlist: dict[Phase, set[str]],
-                 approvals: set[tuple[str, Phase, str, str]] | None = None):
+                 approvals: set[tuple[str, Phase, str, str]] | None = None,
+                 hitl_phases: set[Phase] | None = None):
+        from harness.policy_loader import hitl_phases as policy_hitl_phases
         self.phase_allowlist = phase_allowlist
         self._approvals: set[tuple[str, Phase, str, str]] = approvals or set()
+        # Lo decide la política, no el agente que arma la Action (red team R13).
+        self.hitl_phases = policy_hitl_phases() if hitl_phases is None else hitl_phases
+
+    def needs_approval(self, action: Action, token: ScopeToken) -> bool:
+        return action.requires_human_approval or token.phase in self.hitl_phases
 
     def approve(self, action_name: str, target: str, *, engagement_id: str, phase: Phase) -> None:
         """Registra una aprobación humana para (engagement, fase, acción, objetivo)."""
@@ -154,6 +174,22 @@ class Guard:
             except ValueError:
                 continue
         return False
+
+    def check_resolved(self, canon: str, ips: list[str], token: ScopeToken) -> str | None:
+        """Red team A4: un hostname autorizado debe resolver SOLO a IP en alcance."""
+        if not ips:
+            return "dns_unresolved"
+        for raw in ips:
+            ip = normalize_target(raw)
+            try:
+                addr = ipaddress.ip_address(ip or "")
+            except ValueError:
+                return "dns_out_of_scope"
+            if not any(addr in ipaddress.ip_network(c) for c in token.allowed_cidrs):
+                return "dns_out_of_scope"
+            if self._excluded(str(addr), token):
+                return "excluded"
+        return None
 
     def is_allowed(self, action: Action, target: str, token: ScopeToken) -> bool:
         return self.check(action, target, token) is None
@@ -304,6 +340,14 @@ class KillSwitch:
         raise AttributeError("el kill switch no se modifica por atributo; usá engage()")
 
 
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
 class TokenVerifier(Protocol):
     def verify(self, token: ScopeToken) -> str | None: ...
 
@@ -311,9 +355,10 @@ class TokenVerifier(Protocol):
 class Harness:
     def __init__(self, guard: Guard, audit: AuditSink,
                  tools: dict[str, ToolAdapter], killswitch: KillSwitch,
-                 issuer: TokenVerifier):
+                 issuer: TokenVerifier, resolver: Resolver = system_resolver):
         self.guard, self.audit, self.tools, self.killswitch = guard, audit, tools, killswitch
         self.issuer = issuer
+        self.resolver = resolver
         for engagement_id in audit.killed_engagements():   # kill switch persistente
             killswitch.engage(engagement_id)
 
@@ -343,9 +388,6 @@ class Harness:
             raise ScopeViolation(f"{action.name} sobre {target} bloqueada: {reason}")
         canon = normalize_target(target)
         assert canon is not None          # garantizado por guard.check
-        if action.requires_human_approval and not self.guard.approved(action, canon, token):
-            self.audit.record(agent, action, canon, token, Result.PENDING_HITL)
-            return {"status": "PENDING_HITL"}
         adapter = self.tools.get(action.name)
         if adapter is None:
             self.audit.record(agent, action, canon, token, Result.BLOCKED, "no_adapter")
@@ -353,6 +395,25 @@ class Harness:
         if token.phase not in adapter.allowed_phases:
             self.audit.record(agent, action, canon, token, Result.BLOCKED, "adapter_phase")
             raise ScopeViolation(f"adaptador {adapter.name} no habilitado en {token.phase}")
+        if getattr(adapter, "destructive", True) is not False:   # R14: lo declara el adaptador
+            self.audit.record(agent, action, canon, token, Result.BLOCKED, "destructive")
+            raise ScopeViolation(f"adaptador {adapter.name} es destructivo")
+        if not _is_ip(canon):             # A4: el nombre debe resolver solo a IP en alcance
+            try:
+                ips = self.resolver(canon)
+            except Exception:  # noqa: BLE001 - un resolver que falla es "no resuelve"
+                ips = []
+            reason = self.guard.check_resolved(canon, ips, token)
+            if reason is not None:
+                self.audit.record(agent, action, canon, token, Result.BLOCKED, reason)
+                raise ScopeViolation(f"{canon} resuelve fuera de alcance: {reason}")
+        if self.guard.needs_approval(action, token) and not self.guard.approved(action, canon,
+                                                                                  token):
+            self.audit.record(agent, action, canon, token, Result.PENDING_HITL)
+            return {"status": "PENDING_HITL"}
+        if self.killswitch.is_engaged(token.engagement_id):   # pudo activarse mientras tanto
+            self.audit.record(agent, action, canon, token, Result.ABORTED)
+            raise KillSwitchEngaged()
         # Write-ahead: la decisión OK queda en bitácora ANTES de ejecutar. Si no se puede
         # registrar (otro engagement, base bloqueada, disco lleno), la herramienta no corre.
         self.audit.record(agent, action, canon, token, Result.OK)
