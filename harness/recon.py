@@ -27,7 +27,6 @@ from harness.contracts import (
 from harness.engagement import Engagement, State
 from harness.loops import decide_recon
 from harness.policy_loader import load_policy
-from harness.ratelimit import RateLimiter
 from harness.schemas import Asset, SchemaError, SchemaGate
 
 AGENT = "recon-orchestrator"
@@ -48,10 +47,14 @@ class ReconResult:
     handoff: tuple[Asset, ...] = field(default=())
 
 
+def _host_of(asset: Asset) -> str:
+    return (urlsplit(asset.address).hostname or "") if asset.type == "http_service" \
+        else asset.address
+
+
 class ReconLoop:
     def __init__(self, harness: Harness, engagement: Engagement, graph: AssetGraph,
                  token: ScopeToken, *, max_iterations: int | None = None,
-                 limiter: RateLimiter | None = None,
                  policy: dict[str, Any] | None = None) -> None:
         policy = policy or load_policy()
         self.max_iterations = (int(policy["limits"]["max_loop_iterations"]["recon"])
@@ -59,22 +62,26 @@ class ReconLoop:
         if self.max_iterations < 1:
             raise ValueError("el tope de iteraciones debe ser al menos 1")
         self.harness, self.engagement, self.graph, self.token = harness, engagement, graph, token
-        self.limiter = limiter or RateLimiter(
-            int(policy["limits"]["rate_limit_rps_per_target"]))
         self._gates: dict[str, SchemaGate] = {}
-        self._disabled: set[str] = set()
+        self._disabled: set[str] = graph.disabled_tools()   # persiste entre corridas
+        self._iteration = 0
         self._scope_filter = True         # solo los tests de defensa en profundidad lo apagan
 
     # -- loop -----------------------------------------------------------------------------
     def run(self) -> ReconResult:
         if self.engagement.state != State.RECON:
             return ReconResult("engagement fuera de RECON", 0)
-        start = self.graph.last_iteration() + 1
-        if start == 0:
-            self._seed()
-            start = 1
-        iteration = start
+        done = self.graph.last_done()
+        stopped = self.graph.stop_reason()
+        if stopped is not None:                  # el loop ya terminó: no se vuelve a correr
+            return ReconResult(stopped, done, tuple(self.handoff()))
+        if done == 0:
+            self._seed()                         # idempotente: el grafo deduplica
+        iteration = done + 1                     # una iteración cortada se repite entera
         while True:
+            if iteration > self.max_iterations:  # vale también entre corridas
+                return self._stop("tope de iteraciones alcanzado", iteration - 1)
+            self._iteration = iteration
             frontier = [a for a in self.graph.new_in(iteration - 1)
                         if a.in_scope and a.type in ("domain", "ip")]
             try:
@@ -86,11 +93,22 @@ class ReconLoop:
                         self._step(capability, asset, iteration)
             except _Abort as stop:
                 return ReconResult(f"abortado: {stop}", iteration)
+            self.graph.mark_done(iteration)
             new = sum(1 for a in self.graph.new_in(iteration) if a.in_scope)
             decision = decide_recon(iteration, new, self.max_iterations)
             if decision.decision == "stop":
-                return ReconResult(decision.reason, iteration, tuple(self.graph.handoff()))
+                return self._stop(decision.reason, iteration)
             iteration += 1
+
+    def _stop(self, reason: str, iteration: int) -> ReconResult:
+        self.graph.mark_stop(reason, iteration)
+        return ReconResult(reason, iteration, tuple(self.handoff()))
+
+    def handoff(self) -> list[Asset]:
+        """Entrega a correlación, volviendo a mirar el alcance con el token vigente: el grafo
+        guarda la decisión del momento en que se descubrió cada activo (security-reviewer #10)."""
+        return [a for a in self.graph.handoff()
+                if self.harness.guard.check(_SCOPE_PROBE, _host_of(a), self.token) is None]
 
     def _seed(self) -> None:
         """Semillas: dominios del token y, si hay, IP sueltas (/32 o /128). No se barren rangos."""
@@ -121,7 +139,6 @@ class ReconLoop:
                                         iteration=iteration)
 
     def _invoke(self, capability: str, target: str) -> dict[str, Any] | None:
-        self.limiter.acquire(target)
         try:
             out = self.harness.invoke(AGENT, Action(capability, Phase.RECON), target, self.token)
         except KillSwitchEngaged as exc:
@@ -134,13 +151,15 @@ class ReconLoop:
             return None
         status = out.get("status")
         if status == "error":
-            self._control("tool.error", target, Result.ABORTED, str(out.get("error")))
+            if out.get("error") != "adapter_error":      # ese ya lo registró el Harness
+                self._control("tool.error", target, Result.ABORTED, str(out.get("error")))
             return None
         gate = self._gates.setdefault(capability, SchemaGate())
         if status == "invalid_output":
             self._control("tool.error", target, Result.ABORTED, "invalid_output")
             if gate.record(False) == "PENDING_HITL":
                 self._disabled.add(capability)
+                self.graph.mark_disabled(capability, self._iteration)
                 self._control("tool.escalated", capability, Result.PENDING_HITL,
                               "invalid_output")
             return None
@@ -163,7 +182,10 @@ class ReconLoop:
                     self.graph.add_tech(aid, tech, source_tool="httpx", iteration=iteration)
         location = svc.get("location")
         if isinstance(location, str):            # A5: el destino es un descubrimiento más
-            host = urlsplit(location).hostname
+            try:
+                host = urlsplit(location).hostname
+            except ValueError:                   # Location malformado: dato no confiable
+                return
             if host:
                 self._discover("ip" if _is_ip(host) else "domain", host, "httpx", iteration)
 

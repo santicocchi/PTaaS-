@@ -36,6 +36,15 @@ CREATE TABLE IF NOT EXISTS asset_tech (
   iteration   INTEGER NOT NULL,
   UNIQUE (asset_id, tech)
 );
+CREATE TABLE IF NOT EXISTS loop_events (
+  kind      TEXT NOT NULL CHECK (kind IN ('iteration_done','stop','tool_disabled')),
+  value     TEXT NOT NULL,
+  iteration INTEGER NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS loop_events_no_update BEFORE UPDATE ON loop_events
+BEGIN SELECT RAISE(ABORT, 'append-only: UPDATE prohibido'); END;
+CREATE TRIGGER IF NOT EXISTS loop_events_no_delete BEFORE DELETE ON loop_events
+BEGIN SELECT RAISE(ABORT, 'append-only: DELETE prohibido'); END;
 CREATE TRIGGER IF NOT EXISTS assets_no_update BEFORE UPDATE ON assets
 BEGIN SELECT RAISE(ABORT, 'append-only: UPDATE prohibido'); END;
 CREATE TRIGGER IF NOT EXISTS assets_no_delete BEFORE DELETE ON assets
@@ -136,6 +145,34 @@ class AssetGraph:
     def last_iteration(self) -> int:
         row = self._con.execute("SELECT MAX(iteration) FROM assets").fetchone()
         return -1 if row[0] is None else int(row[0])
+
+    # -- estado del loop (persistido: vale entre corridas) ------------------------------
+    def _event(self, kind: str, value: str, iteration: int) -> None:
+        self._con.execute("INSERT INTO loop_events (kind, value, iteration) VALUES (?, ?, ?)",
+                          (kind, value, iteration))
+
+    def mark_done(self, iteration: int) -> None:
+        self._event("iteration_done", str(iteration), iteration)
+
+    def last_done(self) -> int:
+        row = self._con.execute(
+            "SELECT MAX(iteration) FROM loop_events WHERE kind = 'iteration_done'").fetchone()
+        return 0 if row[0] is None else int(row[0])
+
+    def mark_stop(self, reason: str, iteration: int) -> None:
+        self._event("stop", reason, iteration)
+
+    def stop_reason(self) -> str | None:
+        row = self._con.execute(
+            "SELECT value FROM loop_events WHERE kind = 'stop' ORDER BY rowid LIMIT 1").fetchone()
+        return None if row is None else str(row[0])
+
+    def mark_disabled(self, tool: str, iteration: int) -> None:
+        self._event("tool_disabled", tool, iteration)
+
+    def disabled_tools(self) -> set[str]:
+        return {str(r[0]) for r in self._con.execute(
+            "SELECT value FROM loop_events WHERE kind = 'tool_disabled'")}
 
     def handoff(self) -> list[Asset]:
         """Activos en alcance con al menos una tecnología con versión (design.md D11)."""

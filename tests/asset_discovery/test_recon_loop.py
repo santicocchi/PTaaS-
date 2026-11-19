@@ -9,6 +9,7 @@ from harness.assets import AssetGraph
 from harness.contracts import AuditLog, Guard, Harness, KillSwitch, Phase
 from harness.engagement import Engagement
 from harness.policy_loader import phase_allowlist
+from harness.ratelimit import RateLimiter
 from harness.recon import ReconLoop
 from harness.tokens import TokenIssuer
 from tests.conftest import TEST_ISSUER, make_token
@@ -63,6 +64,17 @@ def recon_engagement():
     return eng
 
 
+class FakeClock:
+    def __init__(self):
+        self.t = 100.0
+
+    def now(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+
+
 class Lab:
     def __init__(self, tmp_path, subfinder=subfinder_lab, httpx=httpx_ok, nmap=nmap_ok,
                  issuer=TEST_ISSUER, max_iterations=5, engagement=None):
@@ -73,8 +85,11 @@ class Lab:
             "httpx.probe": Scripted("httpx.probe", httpx, self.log),
             "nmap.service_scan": Scripted("nmap.service_scan", nmap, self.log),
         }
+        self.clock = FakeClock()
         self.harness = Harness(Guard(phase_allowlist()), self.audit, self.adapters, KillSwitch(),
-                               issuer, resolver=lab_dns)
+                               issuer, resolver=lab_dns,
+                               limiter=RateLimiter(5, clock=self.clock.now,
+                                                   sleep=self.clock.sleep))
         self.token = make_token(cidrs=("10.99.0.0/24",),
                                 domains=("dvwa.lab.test", "juiceshop.lab.test"),
                                 excluded=("juiceshop.lab.test",))
@@ -238,7 +253,7 @@ def test_descubrimientos_fuera_de_alcance_no_cuentan_como_nuevos(tmp_path):
     assert result.reason == "grafo estabilizado" and result.iterations == 1
 
 
-def test_el_orquestador_pasa_por_el_limitador_antes_de_cada_invocacion(tmp_path):
+def test_cada_invocacion_del_loop_pasa_por_el_limitador_por_ip(tmp_path):
     class Spy:
         def __init__(self):
             self.targets = []
@@ -247,9 +262,15 @@ def test_el_orquestador_pasa_por_el_limitador_antes_de_cada_invocacion(tmp_path)
             self.targets.append(target)
 
     lab = Lab(tmp_path)
-    lab.loop.limiter = Spy()
+    lab.harness.limiter = Spy()
     lab.loop.run()
-    assert lab.loop.limiter.targets == [t for _, t in lab.log]
+    assert lab.harness.limiter.targets == [lab_dns(t)[0] for _, t in lab.log]
+
+
+def test_el_loop_respeta_el_rate_limit_por_ip(tmp_path):
+    lab = Lab(tmp_path)
+    lab.loop.run()                       # 9 invocaciones, casi todas a 10.99.0.3
+    assert lab.clock.t >= 101.0
 
 
 def test_servicio_fuera_de_alcance_no_recibe_tecnologias(tmp_path):
@@ -257,3 +278,80 @@ def test_servicio_fuera_de_alcance_no_recibe_tecnologias(tmp_path):
     lab.loop._http_service({"url": "http://203.0.113.7:80", "tech": ["nginx:1.2.3"]}, 1)
     (svc,) = lab.graph.assets()
     assert svc.in_scope is False and svc.technologies == ()
+
+
+# --- hallazgos del security-reviewer ---------------------------------------------------
+
+@pytest.mark.parametrize("location", ["http://[x/", "http://[::1", "http://[no-ip]/", "//",
+                                      "http://exa mple.com/"])
+def test_location_malformado_no_tumba_el_loop(tmp_path, location):
+    lab = Lab(tmp_path, httpx=lambda t: httpx_ok(t, location))
+    result = lab.loop.run()
+    assert result.reason == "grafo estabilizado"
+
+
+def test_el_tope_vale_entre_corridas(tmp_path):
+    counter = itertools.count()
+    sub = lambda t: {"tool": "subfinder", "status": "ok", "invalid_lines": 0,
+                     "hosts": [f"n{next(counter)}.dvwa.lab.test"]}
+    lab = Lab(tmp_path, max_iterations=2, subfinder=sub)
+    assert lab.loop.run().reason == "tope de iteraciones alcanzado"
+    calls = len(lab.log)
+    again = ReconLoop(lab.harness, recon_engagement(), lab.graph, lab.token, max_iterations=2)
+    assert again.run().reason == "tope de iteraciones alcanzado"
+    assert len(lab.log) == calls                       # la segunda corrida no invocó nada
+
+
+def test_loop_terminado_no_se_vuelve_a_correr(tmp_path):
+    lab = Lab(tmp_path)
+    lab.loop.run()
+    calls = len(lab.log)
+    again = ReconLoop(lab.harness, recon_engagement(), lab.graph, lab.token)
+    assert again.run().reason == "grafo estabilizado" and len(lab.log) == calls
+
+
+def test_corte_a_mitad_de_iteracion_se_retoma_sin_saltear(tmp_path):
+    lab = Lab(tmp_path)
+
+    def nmap_then_kill(target):
+        if target == "api.dvwa.lab.test":
+            raise KeyboardInterrupt                   # el proceso se corta en la iteración 2
+        return nmap_ok(target)
+
+    lab.adapters["nmap.service_scan"].script = nmap_then_kill
+    with pytest.raises(KeyboardInterrupt):
+        lab.loop.run()
+    lab.adapters["nmap.service_scan"].script = nmap_ok
+    again = ReconLoop(lab.harness, recon_engagement(), lab.graph, lab.token)
+    assert again.run().reason == "grafo estabilizado"
+    assert ("nmap.service_scan", "www.dvwa.lab.test") in lab.log   # no se salteó
+
+
+def test_herramienta_escalada_sigue_deshabilitada_despues_de_reiniciar(tmp_path):
+    lab = Lab(tmp_path, httpx=lambda t: {"tool": "httpx", "status": "invalid_output",
+                                          "services": [], "invalid_lines": 3})
+
+    def crash_on_api(target):
+        if target == "api.dvwa.lab.test":        # httpx ya escaló (dvwa y api inválidos)
+            raise KeyboardInterrupt
+        return nmap_ok(target)
+
+    lab.adapters["nmap.service_scan"].script = crash_on_api
+    with pytest.raises(KeyboardInterrupt):
+        lab.loop.run()
+    assert len(lab.controls("tool.escalated")) == 1
+    calls = len(lab.adapters["httpx.probe"].calls)
+    lab.adapters["nmap.service_scan"].script = nmap_ok
+    ReconLoop(lab.harness, recon_engagement(), lab.graph, lab.token).run()
+    assert len(lab.adapters["httpx.probe"].calls) == calls     # no volvió a usarse
+
+
+def test_la_entrega_vuelve_a_mirar_el_alcance(tmp_path):
+    lab = Lab(tmp_path)
+    lab.loop.run()
+    stricter = make_token(cidrs=("10.99.0.0/24",), domains=("dvwa.lab.test",),
+                          excluded=("www.dvwa.lab.test",))
+    loop = ReconLoop(lab.harness, recon_engagement(), lab.graph, stricter)
+    handed = {a.address for a in loop.handoff()}
+    assert "http://www.dvwa.lab.test:80" not in handed and "www.dvwa.lab.test" not in handed
+    assert "http://dvwa.lab.test:80" in handed
