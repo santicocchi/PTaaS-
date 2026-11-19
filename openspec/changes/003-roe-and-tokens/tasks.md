@@ -1,8 +1,8 @@
 # Tasks — Change 003
 
 ## Spec y diseño
-- [ ] 1.1 `design.md`: formato del RoE, validaciones, representación de aprobación
-- [ ] 1.2 Delta de `authorization` con ≥ 5 Requirements nuevos (≥ 3 negativos)
+- [x] 1.1 `design.md`: formato del RoE, validaciones, representación de aprobación
+- [x] 1.2 Delta de `authorization` con ≥ 5 Requirements nuevos (≥ 3 negativos)
 - [ ] 1.3 Revisión cruzada del delta
 
 ## Implementación
