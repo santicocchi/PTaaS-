@@ -10,6 +10,19 @@ Un candidato cuya única evidencia es la versión reportada NO DEBE resolverse c
 - WHEN el loop B termina sin evidencia de nuclei ni de ZAP
 - THEN queda `inconclusive` y no `confirmed`
 
+### Scenario: evidencia del mismo CWE que el CVE
+- GIVEN un candidato por CVE con CWE-693 y una alerta de ZAP de confianza alta por falta de CSP (CWE-693)
+- WHEN se resuelve el candidato por CVE
+- THEN queda `inconclusive`: la evidencia de una clase de debilidad no prueba el CVE, y confirma solo su propio candidato por CWE
+
+## ADDED Requirement: Análisis solo con el engagement en ANALYZE
+El loop B DEBE recibir el engagement y NO DEBE invocar ninguna capability si su estado no es `ANALYZE`, al que solo se llega pasando por el gate `first_active_action`. El token de fase no alcanza.
+
+### Scenario: token ANALYZE válido y engagement en CORRELATE
+- GIVEN un token de fase ANALYZE vigente y un engagement en `CORRELATE`
+- WHEN se arranca el loop B
+- THEN no se invoca nuclei ni ZAP y el resultado dice "engagement fuera de ANALYZE"
+
 ## ADDED Requirement: Resolución con reglas fijas
 - Un candidato DEBE quedar `confirmed` solo con evidencia de análisis de confianza alta: un template de nuclei que matcheó o una alerta de ZAP con confianza High o Confirmed.
 - DEBE quedar `discarded` solo si coincide con una entrada de la lista revisada de falsos positivos, y el `rationale` DEBE citarla.
