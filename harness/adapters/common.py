@@ -97,8 +97,10 @@ def default_runner(argv: list[str], timeout_s: int) -> str:
     Lanza ToolFailure si el binario no está, si se pasa del timeout o si sale con error.
     """
     try:
+        # stdin vacío: httpx (y otras) leen objetivos de stdin si es un pipe.
         proc = subprocess.run(argv, shell=False, capture_output=True, text=True,
-                              timeout=timeout_s, check=False, env=safe_env())
+                              stdin=subprocess.DEVNULL, timeout=timeout_s, check=False,
+                              env=safe_env())
     except FileNotFoundError as exc:
         raise ToolFailure("binary_missing") from exc
     except subprocess.TimeoutExpired as exc:

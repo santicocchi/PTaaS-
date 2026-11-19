@@ -36,3 +36,46 @@ targets:
   # En desarrollo solo se permiten estos hosts de laboratorio (red aislada).
   lab_only_domains: ["dvwa.lab.test", "juiceshop.lab.test"]
   lab_only_cidrs: ["10.99.0.0/24"]
+
+subfinder:
+  binary: subfinder
+  # Pasivo: consulta fuentes públicas, no le manda nada al objetivo. Verificado con subfinder v2.
+  fixed_args: ["-silent", "-oJ", "-nc", "-duc", "-timeout", "30", "-max-time", "5"]
+  forbidden_args:        # amplían fuentes, lo vuelven activo o meten config/entrada externa
+    - "-all"
+    - "-recursive"
+    - "-nW"
+    - "-active"
+    - "-oI"
+    - "-ip"
+    - "-proxy"
+    - "-dL"
+    - "-list"
+    - "-config"
+    - "-pc"
+    - "-provider-config"
+  timeout_s: 400
+  output: jsonl
+
+httpx:
+  binary: httpx
+  # Sondeo HTTP liviano contra la IP validada, con el nombre en Host. Verificado con httpx v1.12.0.
+  # El rate limit (-rl) sale de policy.yaml (limits.rate_limit_rps_per_target).
+  fixed_args: ["-silent", "-j", "-nc", "-duc", "-sc", "-title", "-server", "-td", "-location",
+               "-timeout", "10", "-retries", "0"]
+  forbidden_args:        # redirecciones (A5), entrada externa, proxy y métodos/cuerpos arbitrarios
+    - "-fr"
+    - "-follow-redirects"
+    - "-fhr"
+    - "-follow-host-redirects"
+    - "-maxr"
+    - "-max-redirects"
+    - "-l"
+    - "-list"
+    - "-proxy"
+    - "-http-proxy"
+    - "-x"
+    - "-body"
+    - "-path"
+  timeout_s: 120
+  output: jsonl

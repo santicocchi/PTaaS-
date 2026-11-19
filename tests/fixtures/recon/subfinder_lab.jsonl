@@ -1,0 +1,5 @@
+{"host":"www.dvwa.lab.test","input":"dvwa.lab.test","source":"crtsh"}
+{"host":"API.dvwa.lab.test.","input":"dvwa.lab.test","source":"hackertarget"}
+{"host":"www.dvwa.lab.test","input":"dvwa.lab.test","source":"alienvault"}
+{"host":"juiceshop.lab.test","input":"dvwa.lab.test","source":"crtsh"}
+{"host":"otro.ejemplo.org","input":"dvwa.lab.test","source":"crtsh"}

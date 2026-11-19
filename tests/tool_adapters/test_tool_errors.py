@@ -1,5 +1,7 @@
 """Change 004 · tool-adapters: errores de herramienta sin excepción y entorno sin proxy."""
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -46,3 +48,15 @@ def test_entorno_de_herramientas_sin_proxy(monkeypatch):
     env = common.safe_env()
     assert not any(k.lower().endswith("_proxy") and k.lower() != "no_proxy" for k in env)
     assert env["PATH_EXTRA_OK"] == "1"
+
+
+def test_la_herramienta_no_hereda_la_entrada_estandar():
+    """httpx lee objetivos de stdin si es un pipe: con stdin heredado se cuelga o, peor,
+    sondea lo que le llegue por ahí. El runner le da una entrada vacía."""
+    # pytest ya tapa el fd 0 de este proceso, así que se prueba en un proceso aparte con un
+    # pipe en stdin, como lo tendría el harness corriendo detrás de otro programa.
+    code = "from harness.adapters.common import default_runner; print(repr(default_runner(['cat'], 5)))"
+    proc = subprocess.run([sys.executable, "-c", code], input="203.0.113.7\n", text=True,
+                          capture_output=True, timeout=30, check=True,
+                          cwd=Path(__file__).resolve().parents[2])
+    assert proc.stdout.strip() == "''"
