@@ -82,10 +82,62 @@ def test_secuencia_completa_con_ip_fijada_y_host():
     assert scan["url"] == "http://10.99.0.2/" and scan["subtreeOnly"] == "true"
     assert scan["contextName"] == inc["contextName"]
     assert zap.params("/setOptionThreadCount/") == [{"Integer": "1"}]
-    # limpieza al final
-    assert zap.paths()[-3:] == ["/JSON/context/action/removeContext/",
+    assert zap.params("/core/view/alerts/") == [{"baseurl": "http://10.99.0.2/"}]   # con barra
+    # limpieza al final, con sesión nueva para no retener datos del objetivo
+    assert zap.paths()[-5:] == ["/JSON/spider/action/stop/",
+                                "/JSON/context/action/removeContext/",
                                 "/JSON/network/action/removeRateLimitRule/",
-                                "/JSON/replacer/action/removeRule/"]
+                                "/JSON/replacer/action/removeRule/",
+                                "/JSON/core/action/newSession/"]
+    assert zap.params("/spider/action/stop/") == [{"scanId": "0"}]
+
+
+def test_sesion_nueva_antes_de_todo():
+    """Revisión 005, M1: las alertas de corridas anteriores no se atribuyen a este host."""
+    zap = FakeZap()
+    run(zap)
+    assert zap.paths()[0] == "/JSON/core/action/newSession/"
+    assert zap.params("/newSession/")[0]["overwrite"] == "true"
+
+
+def test_spider_sin_formularios_antes_de_escanear():
+    """Revisión 005, B2: ZAP envía formularios (también POST) por defecto; acá no."""
+    zap = FakeZap()
+    run(zap)
+    paths = zap.paths()
+    scan = paths.index("/JSON/spider/action/scan/")
+    for opt in ("setOptionProcessForm", "setOptionPostForm"):
+        i = paths.index(f"/JSON/spider/action/{opt}/")
+        assert i < scan and zap.params(f"/{opt}/") == [{"Boolean": "false"}]
+
+
+def test_reglas_de_host_huerfanas_se_borran():
+    """Revisión 005, M5: una corrida cortada no deja su regla de Host global viva."""
+    class Leftover(FakeZap):
+        def call(self, path, params):
+            if path.endswith("/replacer/view/rules/"):
+                self.calls.append((path, dict(params)))
+                return {"rules": [{"description": "ptaas-viejo"},
+                                  {"description": "Remove CSP"}]}
+            return super().call(path, params)
+
+    zap = Leftover()
+    run(zap)
+    removed = [q["description"] for q in zap.params("/replacer/action/removeRule/")]
+    assert "ptaas-viejo" in removed and "Remove CSP" not in removed
+
+
+def test_la_limpieza_sigue_aunque_un_paso_falle():
+    class Flaky(FakeZap):
+        def call(self, path, params):
+            if path.endswith("/removeContext/"):
+                self.calls.append((path, dict(params)))
+                raise ConnectionResetError("corte")
+            return super().call(path, params)
+
+    zap = Flaky()
+    run(zap)
+    assert zap.paths()[-1] == "/JSON/core/action/newSession/"
 
 
 def test_puerto_no_estandar_e_ip_como_objetivo():
@@ -171,3 +223,45 @@ def test_cliente_http_traduce_errores(monkeypatch):
     with pytest.raises(ZapError) as exc:
         client.call("/JSON/core/view/alerts/", {"baseurl": "http://10.99.0.2"})
     assert exc.value.kind == "exec_error"
+
+
+def test_cliente_http_manda_la_clave_en_un_encabezado(monkeypatch):
+    """Revisión 005, M2: la clave nunca va en la URL (logs de ZAP, excepciones)."""
+    seen = {}
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, n):
+            return b'{"Result": "OK"}'
+
+    client = HttpZapClient("http://10.97.0.20:8080", "secreta")
+
+    def fake_open(req, timeout):
+        seen["url"], seen["key"] = req.full_url, req.get_header("X-zap-api-key")
+        return Resp()
+
+    monkeypatch.setattr(client._opener, "open", fake_open)
+    client.call("/JSON/core/action/setMode/", {"mode": "protect"})
+    assert "secreta" not in seen["url"] and seen["key"] == "secreta"
+    assert not any(type(h).__name__ == "HTTPRedirectHandler" for h in client._opener.handlers)
+
+
+@pytest.mark.parametrize("url,inside", [
+    ("http://10.99.0.2/login.php", True), ("http://10.99.0.2:80/x", True),
+    ("http://203.0.113.7/", False), ("http://10.99.0.20/", False),
+    ("http://10.99.0.2.evil.test/", False), ("http://10.99.0.2:8080/", False),
+    ("https://10.99.0.2/", False), ("http://x@10.99.0.2/", False),
+])
+def test_enlace_a_otro_host_queda_fuera_del_contexto(url, inside):
+    """Scenario «enlace a otro host»: el spider solo sigue lo que entra en el contexto."""
+    import re
+
+    zap = FakeZap(alerts={"alerts": []})
+    run(zap)
+    (inc,) = zap.params("/includeInContext/")
+    assert bool(re.match(inc["regex"], url)) is inside

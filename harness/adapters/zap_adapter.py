@@ -3,17 +3,20 @@
 ZAP corre como servicio del laboratorio. El adaptador no lanza procesos: le habla a la API con un
 conjunto FIJO de endpoints, sin ninguno de escaneo activo. Por cada invocación:
 
+0. sesión nueva (no se mezclan ni se guardan datos de otras corridas o engagements);
 1. modo `protect`;
 2. contexto que incluye solo `http://<ip>(:<puerto>)?/`;
 3. regla del replacer que fija `Host: <nombre>` (la conexión va a la IP que validó el Harness);
 4. rate limit de ZAP con el valor de policy.yaml;
-5. spider acotado (hilos, profundidad, duración), limitado al contexto;
+5. spider acotado (hilos, profundidad, duración), limitado al contexto y SIN enviar formularios;
 6. espera del escaneo pasivo;
 7. lectura de alertas de esa IP;
-8. limpieza (contexto y reglas), pase lo que pase.
+8. limpieza (spider, contexto, reglas y sesión), pase lo que pase.
 """
 from __future__ import annotations
 
+import contextlib
+import http.client
 import ipaddress
 import json
 import os
@@ -33,18 +36,22 @@ from harness.policy_loader import load_policy
 
 # Lo único que el adaptador puede pedirle a ZAP. Ningún `/ascan/` (lo verifica un test).
 ENDPOINTS = frozenset({
+    "/JSON/core/action/newSession/",
     "/JSON/core/action/setMode/",
     "/JSON/context/action/newContext/",
     "/JSON/context/action/includeInContext/",
     "/JSON/context/action/removeContext/",
     "/JSON/replacer/action/addRule/",
     "/JSON/replacer/action/removeRule/",
+    "/JSON/replacer/view/rules/",
     "/JSON/network/action/addRateLimitRule/",
     "/JSON/network/action/removeRateLimitRule/",
     "/JSON/spider/action/setOptionThreadCount/",
     "/JSON/spider/action/setOptionMaxDepth/",
     "/JSON/spider/action/setOptionMaxDuration/",
     "/JSON/spider/action/setOptionMaxChildren/",
+    "/JSON/spider/action/setOptionProcessForm/",
+    "/JSON/spider/action/setOptionPostForm/",
     "/JSON/spider/action/scan/",
     "/JSON/spider/action/stop/",
     "/JSON/spider/view/status/",
@@ -66,30 +73,36 @@ class ZapClient(Protocol):
     def call(self, path: str, params: dict[str, str]) -> dict[str, Any]: ...
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None                        # la API no redirige; si lo hace, es un error
+
+
 class HttpZapClient:
-    """Cliente mínimo de la API de ZAP: sin proxy, con clave, y solo endpoints permitidos."""
+    """Cliente mínimo de la API de ZAP: sin proxy, sin redirecciones, clave en un encabezado
+    (nunca en la URL, que puede terminar en un log) y solo endpoints permitidos."""
 
     def __init__(self, base_url: str, api_key: str, timeout_s: int = 30) -> None:
         self._base = base_url.rstrip("/")
         self._key = api_key
         self._timeout = timeout_s
-        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                                   _NoRedirect())
 
     def call(self, path: str, params: dict[str, str]) -> dict[str, Any]:
         if path not in ENDPOINTS:
             raise ValueError(f"endpoint de ZAP no permitido: {path}")
-        query = urllib.parse.urlencode({**params, "apikey": self._key})
+        req = urllib.request.Request(f"{self._base}{path}?{urllib.parse.urlencode(params)}",
+                                     headers={"X-ZAP-API-Key": self._key})
         try:
-            with self._opener.open(f"{self._base}{path}?{query}", timeout=self._timeout) as r:
+            with self._opener.open(req, timeout=self._timeout) as r:
                 data = json.loads(r.read(5_000_000).decode("utf-8", "replace"))
         except TimeoutError as exc:
             raise ZapError("timeout") from exc
-        except urllib.error.HTTPError as exc:
-            raise ZapError("exec_error") from exc
-        except (urllib.error.URLError, OSError) as exc:
-            raise ZapError("exec_error") from exc
-        except json.JSONDecodeError as exc:
-            raise ZapError("invalid_output") from exc
+        except (urllib.error.URLError, OSError, http.client.HTTPException):
+            raise ZapError("exec_error") from None     # sin encadenar: nada de la URL ni la clave
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise ZapError("invalid_output") from None
         if not isinstance(data, dict) or "code" in data:   # ZAP contesta errores con "code"
             raise ZapError("exec_error")
         return data
@@ -192,10 +205,13 @@ class ZapBaselineScan:
         p, spider = self._profile, self._profile["spider"]
         name = f"ptaas-{uuid.uuid4().hex[:12]}"
         netloc = _netloc(ip, port)
-        base = f"http://{netloc}/"
+        base = f"http://{netloc}/"          # con la barra: 10.99.0.2 no trae 10.99.0.20
         port_re = "(:80)?" if port == 80 else f":{port}"
         host_re = _regex_escape(f"[{ip}]" if ":" in ip else ip)
+        scan_id = ""
         try:
+            client.call("/JSON/core/action/newSession/", {"name": "", "overwrite": "true"})
+            self._drop_leftovers(client)
             client.call("/JSON/core/action/setMode/", {"mode": "protect"})
             client.call("/JSON/context/action/newContext/", {"contextName": name})
             client.call("/JSON/context/action/includeInContext/",
@@ -216,6 +232,10 @@ class ZapBaselineScan:
                         {"Integer": str(spider["max_duration_min"])})
             client.call("/JSON/spider/action/setOptionMaxChildren/",
                         {"Integer": str(spider["max_children"])})
+            # Sin formularios: el spider de ZAP los completa y los envía (también POST) por
+            # defecto, y eso puede iniciar sesión o cambiar estado en el objetivo.
+            client.call("/JSON/spider/action/setOptionProcessForm/", {"Boolean": "false"})
+            client.call("/JSON/spider/action/setOptionPostForm/", {"Boolean": "false"})
             scan = client.call("/JSON/spider/action/scan/", {
                 "url": base, "contextName": name, "subtreeOnly": "true", "recurse": "true",
                 "maxChildren": str(spider["max_children"])})
@@ -228,10 +248,10 @@ class ZapBaselineScan:
                        deadline)
             self._wait(lambda: str(client.call("/JSON/pscan/view/recordsToScan/", {}).get(
                 "recordsToScan")) == "0", deadline)
-            raw = client.call("/JSON/core/view/alerts/", {"baseurl": base.rstrip("/")})
+            raw = client.call("/JSON/core/view/alerts/", {"baseurl": base})
             return parse_alerts(host, ip, port, raw.get("alerts"))
         finally:
-            self._cleanup(client, name, host)
+            self._cleanup(client, name, host, scan_id)
 
     def _wait(self, done: Callable[[], bool], deadline: float) -> None:
         while not done():
@@ -240,14 +260,25 @@ class ZapBaselineScan:
             self._sleep(self._profile["poll_s"])
 
     @staticmethod
-    def _cleanup(client: ZapClient, name: str, host: str) -> None:
-        steps = [("/JSON/spider/action/stop/", {}),
+    def _drop_leftovers(client: ZapClient) -> None:
+        """Una corrida cortada (proceso muerto) puede dejar su regla de Host, que es global."""
+        rules = client.call("/JSON/replacer/view/rules/", {}).get("rules")
+        for rule in rules if isinstance(rules, list) else []:
+            desc = rule.get("description") if isinstance(rule, dict) else None
+            if isinstance(desc, str) and desc.startswith("ptaas-"):
+                client.call("/JSON/replacer/action/removeRule/", {"description": desc})
+
+    @staticmethod
+    def _cleanup(client: ZapClient, name: str, host: str, scan_id: str) -> None:
+        steps = [("/JSON/spider/action/stop/", {"scanId": scan_id} if scan_id.isdigit() else {}),
                  ("/JSON/context/action/removeContext/", {"contextName": name}),
                  ("/JSON/network/action/removeRateLimitRule/", {"description": name})]
         if not _is_ip(host):
             steps.append(("/JSON/replacer/action/removeRule/", {"description": name}))
+        # Sesión nueva al final: ZAP no se queda con el historial ni las alertas del objetivo.
+        steps.append(("/JSON/core/action/newSession/", {"name": "", "overwrite": "true"}))
         for path, params in steps:
-            try:
+            # Limpiar es lo mejor posible: cada paso se intenta aunque falle otro, y el error
+            # real (si lo hubo) ya salió por el camino normal.
+            with contextlib.suppress(Exception):
                 client.call(path, params)
-            except ZapError:
-                pass                       # limpiar es lo mejor posible; el error real ya salió
