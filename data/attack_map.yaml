@@ -1,0 +1,8 @@
+# Tabla curada CWE → técnica MITRE ATT&CK (change 005, D5). Un CWE que no está acá queda con
+# `attack_technique: null`: no se infiere la técnica.
+cwe_to_attack:
+  CWE-22: T1190      # Path Traversal en una aplicación expuesta → Exploit Public-Facing Application
+  CWE-78: T1190
+  CWE-89: T1190
+  CWE-94: T1190
+  CWE-497: T1592     # Información del sistema expuesta → Gather Victim Host Information
