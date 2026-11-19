@@ -66,7 +66,7 @@ def test_accion_destructiva_siempre_bloqueada(env, token):
 
 def test_kill_switch_aborta_sin_ejecutar(env, token):
     h, _, audit, ks, adapters = env
-    ks.engaged = True
+    ks.engage("eng-1")
     with pytest.raises(KillSwitchEngaged):
         h.invoke("recon", act("httpx.probe", Phase.RECON), "10.0.0.5", token)
     assert audit.entries[-1]["result"] == "ABORTED" and adapters["httpx.probe"].calls == []
@@ -79,7 +79,7 @@ def test_validacion_sin_aprobacion_queda_pending_hitl(env):
     out = h.invoke("validation", a, "10.0.0.5", t)
     assert out["status"] == "PENDING_HITL"
     assert audit.entries[-1]["result"] == "PENDING_HITL" and adapters[a.name].calls == []
-    guard.approve(a.name, "10.0.0.5")
+    guard.approve(a.name, "10.0.0.5", engagement_id="eng-1", phase=Phase.VALIDATE)
     assert h.invoke("validation", a, "10.0.0.5", t)["ok"]
 
 
@@ -95,3 +95,95 @@ def test_adaptador_no_habilitado_en_la_fase_se_bloquea(env, token):
     guard.phase_allowlist[Phase.RECON].add("zap.baseline_scan")
     with pytest.raises(ScopeViolation):
         h.invoke("recon", act("zap.baseline_scan", Phase.RECON), "10.0.0.5", token)
+
+
+# --- Change 008: aprobación atada a engagement y fase ------------------------
+
+def _validate_action():
+    return act("poc_catalog.run_parametrized", Phase.VALIDATE, requires_human_approval=True)
+
+
+def test_aprobacion_reutilizada_en_otro_engagement_queda_pending(env):
+    h, guard, audit, _, adapters = env
+    a = _validate_action()
+    guard.approve(a.name, "10.0.0.5", engagement_id="eng-1", phase=Phase.VALIDATE)
+    t_eng2 = make_token(phase=Phase.VALIDATE, engagement_id="eng-2")
+    out = h.invoke("validation", a, "10.0.0.5", t_eng2)
+    assert out["status"] == "PENDING_HITL"
+    assert audit.entries[-1]["result"] == "PENDING_HITL"
+    assert audit.entries[-1]["engagement"] == "eng-2"
+    assert adapters[a.name].calls == []
+
+
+def test_aprobacion_valida_para_su_engagement_y_fase(env):
+    h, guard, audit, _, adapters = env
+    a = _validate_action()
+    guard.approve(a.name, "10.0.0.5", engagement_id="eng-1", phase=Phase.VALIDATE)
+    out = h.invoke("validation", a, "10.0.0.5", make_token(phase=Phase.VALIDATE))
+    assert out["ok"] and adapters[a.name].calls == ["10.0.0.5"]
+    assert audit.entries[-1]["result"] == "OK"
+
+
+# --- Change 008: normalización del objetivo ---------------------------------
+
+def test_hostname_con_mayusculas_y_punto_final_decide_igual(env, token):
+    h, _, audit, _, adapters = env
+    h.invoke("recon", act("httpx.probe", Phase.RECON), "HOST.Lab.Example.Test.", token)
+    assert audit.entries[-1]["result"] == "OK"
+    assert adapters["httpx.probe"].calls == ["host.lab.example.test"]   # llega normalizado
+
+
+def test_ipv4_fuera_de_alcance_escrita_como_ipv6_mapeada_se_bloquea(env, token):
+    h, _, audit, _, adapters = env
+    with pytest.raises(ScopeViolation):
+        h.invoke("recon", act("httpx.probe", Phase.RECON), "::ffff:10.0.1.5", token)
+    assert audit.entries[-1]["result"] == "BLOCKED"
+    assert adapters["httpx.probe"].calls == []
+
+
+def test_ipv4_en_alcance_escrita_como_ipv6_mapeada_se_evalua_como_ipv4(env, token):
+    h, _, _, _, adapters = env
+    h.invoke("recon", act("httpx.probe", Phase.RECON), "::ffff:10.0.0.5", token)
+    assert adapters["httpx.probe"].calls == ["10.0.0.5"]
+
+
+@pytest.mark.parametrize("target", [
+    "http://lab.example.test:80/x",
+    "lab.example.test:80",
+    "lab.example.test/x",
+    "lab example.test",
+    "",
+])
+def test_objetivo_con_puerto_esquema_o_ruta_se_bloquea(env, token, target):
+    h, _, audit, _, adapters = env
+    with pytest.raises(ScopeViolation):
+        h.invoke("recon", act("httpx.probe", Phase.RECON), target, token)
+    assert audit.entries[-1]["result"] == "BLOCKED"
+    assert adapters["httpx.probe"].calls == []
+
+
+def test_aprobacion_de_otra_fase_no_habilita(env):
+    h, guard, _, _, adapters = env
+    a = _validate_action()
+    guard.approve(a.name, "dvwa.lab.test", engagement_id="eng-1", phase=Phase.ANALYZE)
+    t = make_token(phase=Phase.VALIDATE, domains=("dvwa.lab.test",))
+    assert h.invoke("validation", a, "dvwa.lab.test", t)["status"] == "PENDING_HITL"
+    assert adapters[a.name].calls == []
+
+
+@pytest.mark.parametrize("target", ["fe80::1%eth0", "lab.exämple.test", "-x.lab.example.test"])
+def test_objetivo_unicode_zona_o_guion_inicial_se_bloquea(env, token, target):
+    h, _, audit, *_ = env
+    with pytest.raises(ScopeViolation):
+        h.invoke("recon", act("httpx.probe", Phase.RECON), target, token)
+    assert audit.entries[-1]["reason"] == "out_of_scope"
+
+
+# Scenarios de "Token emitido por el harness": se implementan en el change 003.
+@pytest.mark.xfail(strict=True, reason="change 003: emisor de tokens con integridad")
+def test_token_fabricado_se_bloquea_como_invalido(env):
+    h, _, audit, *_ = env
+    falso = make_token(cidrs=("0.0.0.0/0",))
+    with pytest.raises(ScopeViolation):
+        h.invoke("recon", act("httpx.probe", Phase.RECON), "10.0.0.5", falso)
+    assert audit.entries[-1]["reason"] == "token_invalid"

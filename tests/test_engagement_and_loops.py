@@ -1,7 +1,9 @@
 import pytest
 
+from harness.contracts import KillSwitchEngaged, Phase
 from harness.engagement import Engagement, State, TransitionError
 from harness.loops import decide_detection, decide_recon, decide_validation
+from tests.conftest import act, make_token
 
 
 def _avanzar_hasta(e: Engagement, destino: State):
@@ -57,3 +59,29 @@ def test_loop_b_sin_ganancia_de_informacion():
 def test_loop_c_topes():
     assert decide_validation(2, False, 2).reason == "intentos agotados"
     assert decide_validation(1, True, 2).reason == "evidencia suficiente"
+
+
+# --- Change 008: kill switch irreversible por engagement --------------------
+
+def test_kill_switch_no_se_puede_desactivar(env, token):
+    h, _, audit, ks, adapters = env
+    ks.engage("eng-1")
+    with pytest.raises(PermissionError):
+        ks.disengage("eng-1")
+    with pytest.raises(AttributeError):
+        ks.engaged = False
+    with pytest.raises(KillSwitchEngaged):
+        h.invoke("recon", act("httpx.probe", Phase.RECON), "10.0.0.5", token)
+    assert audit.entries[-1]["result"] == "ABORTED"
+    assert adapters["httpx.probe"].calls == []
+
+
+def test_kill_switch_de_otro_engagement_no_frena_este(env):
+    h, _, audit, ks, adapters = env
+    ks.engage("eng-1")
+    t1, t2 = make_token(engagement_id="eng-1"), make_token(engagement_id="eng-2")
+    assert h.invoke("recon", act("httpx.probe", Phase.RECON), "10.0.0.5", t2)["ok"]
+    with pytest.raises(KillSwitchEngaged):
+        h.invoke("recon", act("httpx.probe", Phase.RECON), "10.0.0.5", t1)
+    assert audit.entries[-1]["result"] == "ABORTED"
+    assert adapters["httpx.probe"].calls == ["10.0.0.5"]       # solo corrió el de eng-2
