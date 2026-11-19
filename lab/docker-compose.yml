@@ -8,26 +8,35 @@
 # Los alias coinciden con `targets.lab_only_domains` de harness/profiles.yaml.
 services:
   dvwa:
-    image: vulnerables/web-dvwa
+    # Imágenes fijadas por digest: lo que se probó es lo que corre (change 004).
+    image: vulnerables/web-dvwa@sha256:dae203fe11646a86937bf04db0079adef295f426da68a92b40e3b181f337daa7
     networks:
       lab:
         aliases: [dvwa.lab.test]
 
   juiceshop:
-    image: bkimminich/juice-shop
+    image: bkimminich/juice-shop@sha256:877fc77b12d72b42e486eb09b6b1711cc56514306d92006b284e7e7cf076a809
     networks:
       lab:
         aliases: [juiceshop.lab.test]
 
   runner:
-    # python:3.12-slim + nmap + requirements.txt (ver lab/runner.Dockerfile).
+    # python:3.12-alpine + nmap + httpx + subfinder + requirements.txt (ver lab/runner.Dockerfile).
     build:
       context: ..
       dockerfile: lab/runner.Dockerfile
     image: ptaas-runner
     working_dir: /work
+    # El runner procesa respuestas de los objetivos, que son datos hostiles. Por eso el código
+    # del proyecto se monta de SOLO LECTURA: desde el contenedor no se puede tocar el harness.
+    # Lo único escribible es demo/out (bitácoras y grafos de las demos).
+    # Corre como root a propósito: con un usuario fijo, demo/out (que es del usuario del host)
+    # deja de ser escribible en Linux. El código igual no se puede modificar por el montaje.
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
     volumes:
-      - ..:/work
+      - ..:/work:ro
+      - ../demo/out:/work/demo/out
     command: sleep infinity
     networks:
       - lab

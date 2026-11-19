@@ -76,3 +76,8 @@ fuera de alcance y por qué), lo que se entrega a correlación y la bitácora ve
 - **Laboratorio:** subfinder no encuentra nada porque sus fuentes están en internet y el runner
   no tiene salida. El loop sigue con las semillas del RoE: httpx y nmap sobre `dvwa.lab.test`
   (Apache 2.4.25). Juice Shop no se toca porque el RoE lo excluye.
+
+**El runner monta el proyecto de solo lectura.** Las herramientas procesan respuestas de los
+objetivos, que son datos hostiles; si algo saliera mal adentro del contenedor, no puede modificar
+el código del harness. Lo único escribible es `demo/out/`. Los tests (`pytest`) se corren en tu
+máquina, no en el runner.
