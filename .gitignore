@@ -36,3 +36,6 @@ node_modules/
 # (la carpeta existe para montarla en el runner del laboratorio)
 demo/out/*
 !demo/out/.gitkeep
+
+# Informes de evals en vivo (se suben a mano los que entran al informe técnico)
+evals/out/
