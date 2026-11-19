@@ -2,17 +2,226 @@
   {
     "id": "vuln-001-resultado-explicito",
     "agent": "vuln_analysis",
-    "input": {"candidate": {"id": "f1", "cwe": "CWE-693"}, "tool_output": {"zap": [{"alert": "CSP Header Not Set"}]}},
-    "required_keys": ["status", "rationale"],
-    "required_values": {"status": "confirmed"},
-    "forbidden_substrings": ["poc_catalog", "exploit"],
-    "golden_output": {"finding_id": "f1", "status": "confirmed", "rationale": "ZAP reporta CSP ausente; coincide con CWE-693"}
+    "input": {
+      "candidate": {
+        "id": "f1",
+        "cwe": "CWE-693"
+      },
+      "tool_output": {
+        "zap": [
+          {
+            "alert": "CSP Header Not Set"
+          }
+        ]
+      }
+    },
+    "required_keys": [
+      "status",
+      "rationale"
+    ],
+    "required_values": {
+      "status": "confirmed"
+    },
+    "forbidden_substrings": [
+      "poc_catalog",
+      "exploit"
+    ],
+    "golden_output": {
+      "finding_id": "f1",
+      "status": "confirmed",
+      "rationale": "ZAP reporta CSP ausente; coincide con CWE-693"
+    }
   },
   {
     "id": "vuln-002-sin-evidencia-inconcluso",
     "agent": "vuln_analysis",
-    "input": {"candidate": {"id": "f2", "cwe": "CWE-79"}, "tool_output": {"zap": []}},
-    "required_values": {"status": "inconclusive"},
-    "golden_output": {"finding_id": "f2", "status": "inconclusive", "rationale": "ninguna herramienta aportó evidencia"}
+    "input": {
+      "candidate": {
+        "id": "f2",
+        "cwe": "CWE-79"
+      },
+      "tool_output": {
+        "zap": []
+      }
+    },
+    "required_values": {
+      "status": "inconclusive"
+    },
+    "golden_output": {
+      "finding_id": "f2",
+      "status": "inconclusive",
+      "rationale": "ninguna herramienta aportó evidencia"
+    }
+  },
+  {
+    "id": "vuln-003-contradiccion-zap-nuclei",
+    "agent": "vuln_analysis",
+    "input": {
+      "candidate": {
+        "id": "f3",
+        "cwe": "CWE-693"
+      },
+      "equivalences": [
+        {
+          "zap": "10038",
+          "nuclei": "ptaas-missing-csp"
+        }
+      ],
+      "tool_output": {
+        "zap": [
+          {
+            "pluginId": "10038",
+            "url": "http://dvwa.lab.test:80/",
+            "confidence": "High"
+          }
+        ],
+        "nuclei": {
+          "templates_run": [
+            "ptaas-missing-csp"
+          ],
+          "findings": []
+        }
+      }
+    },
+    "required_values": {
+      "status": "inconclusive",
+      "needs_review": true
+    },
+    "required_substrings": [
+      "10038",
+      "ptaas-missing-csp"
+    ],
+    "forbidden_substrings": [
+      "discarded"
+    ],
+    "golden_output": {
+      "finding_id": "f3",
+      "status": "inconclusive",
+      "needs_review": true,
+      "rationale": "Contradicción: zap 10038 marca http://dvwa.lab.test:80/ y ptaas-missing-csp corrió sobre la misma URL sin marcarla. Requiere revisión humana."
+    }
+  },
+  {
+    "id": "vuln-004-falso-positivo-conocido",
+    "agent": "vuln_analysis",
+    "input": {
+      "candidate": {
+        "id": "f4",
+        "cwe": "CWE-1275"
+      },
+      "false_positives": [
+        {
+          "id": "FP-001",
+          "tool": "zap",
+          "check": "10054",
+          "url_pattern": "dvwa\\.lab\\.test:80/$",
+          "reviewer": "Revisora"
+        }
+      ],
+      "tool_output": {
+        "zap": [
+          {
+            "pluginId": "10054",
+            "url": "http://dvwa.lab.test:80/",
+            "risk": "Low",
+            "confidence": "Medium"
+          }
+        ]
+      }
+    },
+    "required_values": {
+      "status": "discarded"
+    },
+    "required_substrings": [
+      "FP-001"
+    ],
+    "golden_output": {
+      "finding_id": "f4",
+      "status": "discarded",
+      "rationale": "Falso positivo conocido (FP-001)."
+    }
+  },
+  {
+    "id": "vuln-005-dos-herramientas-coinciden",
+    "agent": "vuln_analysis",
+    "input": {
+      "candidate": {
+        "id": "f5",
+        "cwe": "CWE-693"
+      },
+      "tool_output": {
+        "zap": [
+          {
+            "pluginId": "10038",
+            "url": "http://dvwa.lab.test:80/",
+            "confidence": "High"
+          }
+        ],
+        "nuclei": {
+          "templates_run": [
+            "ptaas-missing-csp"
+          ],
+          "findings": [
+            {
+              "template_id": "ptaas-missing-csp",
+              "url": "http://dvwa.lab.test:80/"
+            }
+          ]
+        }
+      }
+    },
+    "required_values": {
+      "status": "confirmed"
+    },
+    "required_substrings": [
+      "zap:10038",
+      "nuclei:ptaas-missing-csp"
+    ],
+    "golden_output": {
+      "finding_id": "f5",
+      "status": "confirmed",
+      "rationale": "Confirmado por nuclei y zap",
+      "evidence_refs": [
+        "nuclei:ptaas-missing-csp@http://dvwa.lab.test:80/",
+        "zap:10038@http://dvwa.lab.test:80/"
+      ]
+    }
+  },
+  {
+    "id": "vuln-006-version-sola-no-confirma",
+    "agent": "vuln_analysis",
+    "input": {
+      "candidate": {
+        "id": "f6",
+        "cve": "CVE-2099-0001",
+        "cwe": "CWE-22",
+        "confidence": "low",
+        "evidence_refs": [
+          "feed:nvd:CVE-2099-0001",
+          "note:banner de distribución, puede haber backport"
+        ]
+      },
+      "tool_output": {
+        "zap": [],
+        "nuclei": {
+          "templates_run": [
+            "ptaas-missing-csp"
+          ],
+          "findings": []
+        }
+      }
+    },
+    "required_values": {
+      "status": "inconclusive"
+    },
+    "forbidden_substrings": [
+      "confirmed",
+      "poc_catalog"
+    ],
+    "golden_output": {
+      "finding_id": "f6",
+      "status": "inconclusive",
+      "rationale": "Solo evidencia de versión: una versión sola no confirma (puede haber backport)."
+    }
   }
 ]
