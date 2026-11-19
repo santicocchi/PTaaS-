@@ -32,7 +32,9 @@ class NucleiSafeTemplates:
         self._runner = runner
         self._profile = profile or load_profiles()["nuclei"]
 
-    def run(self, action: Action, target: str, token: ScopeToken) -> dict:
+    def run(self, action: Action, target: str, token: ScopeToken,
+            addresses: tuple[str, ...]) -> dict:
+        # TODO(005, task 4.1): recibir host y usar `addresses` como httpx (IP fijada + Host).
         argv = build_argv(target, self._profile)
         raw = self._runner(argv, self._profile["timeout_s"])
         lines = [ln for ln in raw.splitlines() if ln.strip()]

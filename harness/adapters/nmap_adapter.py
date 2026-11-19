@@ -1,7 +1,10 @@
 """Adaptador nmap.service_scan: detección de servicios acotada y sin scripts."""
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from harness.adapters.common import (
+    InvalidTarget,
     Runner,
     default_runner,
     load_profiles,
@@ -11,11 +14,14 @@ from harness.adapters.common import (
 from harness.contracts import Action, Phase, ScopeToken
 
 
-def build_argv(target: str, profile: dict | None = None) -> list[str]:
+def build_argv(targets: str | Sequence[str], profile: dict | None = None) -> list[str]:
     p = profile or load_profiles()["nmap"]
-    t = validate_target(target, allow_cidr=True)
+    items = [targets] if isinstance(targets, str) else list(targets)
+    if not items:
+        raise InvalidTarget("nmap sin objetivos")
+    ts = [validate_target(t, allow_cidr=True) for t in items]
     argv = [p["binary"], *p["fixed_args"], "--max-rate", str(p["max_rate_pps"]),
-            "-oX", "-", t]
+            "-oX", "-", *ts]
     reject_forbidden(argv, p["forbidden_args"])
     return argv
 
@@ -29,7 +35,9 @@ class NmapServiceScan:
         self._runner = runner
         self._profile = profile or load_profiles()["nmap"]
 
-    def run(self, action: Action, target: str, token: ScopeToken) -> dict:
-        argv = build_argv(target, self._profile)
+    def run(self, action: Action, target: str, token: ScopeToken,
+            addresses: tuple[str, ...]) -> dict:
+        # Escanea las IP que validó el Harness, nunca el nombre (DNS rebinding, 004).
+        argv = build_argv(addresses, self._profile)
         raw = self._runner(argv, self._profile["timeout_s"])
         return {"tool": "nmap", "target": target, "format": "xml", "raw": raw}

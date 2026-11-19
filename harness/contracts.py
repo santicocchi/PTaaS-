@@ -68,8 +68,13 @@ class ToolAdapter(Protocol):
     allowed_phases: tuple[Phase, ...]
     destructive: bool
 
-    def run(self, action: Action, target: str, token: ScopeToken) -> dict:
-        """Debe devolver JSON parseable. Nunca ejecuta fuera de `target`."""
+    def run(self, action: Action, target: str, token: ScopeToken,
+            addresses: tuple[str, ...]) -> dict:
+        """Debe devolver JSON parseable. Nunca ejecuta fuera de `target`.
+
+        `addresses` son las IP que validó el Harness. Un adaptador que se conecta al objetivo
+        DEBE usarlas en lugar de dejar que la herramienta resuelva el nombre otra vez (004).
+        """
         ...
 
 
@@ -398,6 +403,7 @@ class Harness:
         if getattr(adapter, "destructive", True) is not False:   # R14: lo declara el adaptador
             self.audit.record(agent, action, canon, token, Result.BLOCKED, "destructive")
             raise ScopeViolation(f"adaptador {adapter.name} es destructivo")
+        addresses: tuple[str, ...] = (canon,)
         if not _is_ip(canon):             # A4: el nombre debe resolver solo a IP en alcance
             try:
                 ips = self.resolver(canon)
@@ -407,6 +413,8 @@ class Harness:
             if reason is not None:
                 self.audit.record(agent, action, canon, token, Result.BLOCKED, reason)
                 raise ScopeViolation(f"{canon} resuelve fuera de alcance: {reason}")
+            # 004: la herramienta usa estas IP y no vuelve a resolver (DNS rebinding).
+            addresses = tuple(sorted({str(normalize_target(ip)) for ip in ips}))
         if self.guard.needs_approval(action, token) and not self.guard.approved(action, canon,
                                                                                   token):
             self.audit.record(agent, action, canon, token, Result.PENDING_HITL)
@@ -417,4 +425,4 @@ class Harness:
         # Write-ahead: la decisión OK queda en bitácora ANTES de ejecutar. Si no se puede
         # registrar (otro engagement, base bloqueada, disco lleno), la herramienta no corre.
         self.audit.record(agent, action, canon, token, Result.OK)
-        return adapter.run(action, canon, token)
+        return adapter.run(action, canon, token, addresses)

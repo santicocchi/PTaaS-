@@ -21,9 +21,11 @@ class FakeAdapter:
     def __init__(self, name, phases, destructive=False):
         self.name, self.allowed_phases, self.destructive = name, phases, destructive
         self.calls = []
+        self.addresses = []
 
-    def run(self, action, target, token):
+    def run(self, action, target, token, addresses):
         self.calls.append(target)
+        self.addresses.append(addresses)
         return {"ok": True, "target": target}
 
 
