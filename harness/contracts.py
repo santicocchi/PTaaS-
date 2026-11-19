@@ -34,7 +34,13 @@ class Result(str, Enum):
     ABORTED = "ABORTED"
 
 
-class ScopeViolation(Exception): ...
+class ScopeViolation(Exception):
+    """Acción bloqueada. `reason` es uno de BLOCK_REASONS (lo usa el orquestador del 004)."""
+
+    def __init__(self, message: str, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+
 class KillSwitchEngaged(Exception): ...
 class AuditIntegrityError(Exception): ...
 
@@ -84,6 +90,9 @@ BLOCK_REASONS = frozenset({
     "token_revoked", "excluded", "roe_invalid", "roe_tampered", "phase_not_in_roe",
     "outside_window", "dns_out_of_scope", "dns_unresolved",
 })
+
+# Motivos de un registro no BLOCKED: solo errores de herramienta (change 004).
+TOOL_ERROR_REASONS = frozenset({"timeout", "binary_missing", "exit_code", "invalid_output"})
 
 Resolver = Callable[[str], list[str]]
 
@@ -238,6 +247,10 @@ def make_entry(*, prev: str, engagement: str, agent: str, action: str, target: s
         if reason not in BLOCK_REASONS:
             raise ValueError(f"motivo de bloqueo inválido: {reason!r}")
         body["reason"] = reason
+    elif reason is not None:
+        if reason not in TOOL_ERROR_REASONS:
+            raise ValueError(f"motivo inválido para {result.value}: {reason!r}")
+        body["reason"] = reason
     if evidence is not None:
         if not EVIDENCE_RE.match(evidence) or ".." in evidence.split("/"):
             raise ValueError("la evidencia debe ser una referencia '<ruta>#sha256=<hex>'")
@@ -390,19 +403,21 @@ class Harness:
                   or self.guard.check(action, target, token))
         if reason is not None:
             self.audit.record(agent, action, target, token, Result.BLOCKED, reason)
-            raise ScopeViolation(f"{action.name} sobre {target} bloqueada: {reason}")
+            raise ScopeViolation(f"{action.name} sobre {target} bloqueada: {reason}", reason)
         canon = normalize_target(target)
         assert canon is not None          # garantizado por guard.check
         adapter = self.tools.get(action.name)
         if adapter is None:
             self.audit.record(agent, action, canon, token, Result.BLOCKED, "no_adapter")
-            raise ScopeViolation(f"capability sin adaptador registrado: {action.name}")
+            raise ScopeViolation(f"capability sin adaptador registrado: {action.name}",
+                                 "no_adapter")
         if token.phase not in adapter.allowed_phases:
             self.audit.record(agent, action, canon, token, Result.BLOCKED, "adapter_phase")
-            raise ScopeViolation(f"adaptador {adapter.name} no habilitado en {token.phase}")
+            raise ScopeViolation(f"adaptador {adapter.name} no habilitado en {token.phase}",
+                                 "adapter_phase")
         if getattr(adapter, "destructive", True) is not False:   # R14: lo declara el adaptador
             self.audit.record(agent, action, canon, token, Result.BLOCKED, "destructive")
-            raise ScopeViolation(f"adaptador {adapter.name} es destructivo")
+            raise ScopeViolation(f"adaptador {adapter.name} es destructivo", "destructive")
         addresses: tuple[str, ...] = (canon,)
         if not _is_ip(canon):             # A4: el nombre debe resolver solo a IP en alcance
             try:
@@ -412,7 +427,7 @@ class Harness:
             reason = self.guard.check_resolved(canon, ips, token)
             if reason is not None:
                 self.audit.record(agent, action, canon, token, Result.BLOCKED, reason)
-                raise ScopeViolation(f"{canon} resuelve fuera de alcance: {reason}")
+                raise ScopeViolation(f"{canon} resuelve fuera de alcance: {reason}", reason)
             # 004: la herramienta usa estas IP y no vuelve a resolver (DNS rebinding).
             addresses = tuple(sorted({str(normalize_target(ip)) for ip in ips}))
         if self.guard.needs_approval(action, token) and not self.guard.approved(action, canon,

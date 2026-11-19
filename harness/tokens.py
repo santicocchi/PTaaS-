@@ -58,7 +58,7 @@ class TokenIssuer:
 
     def _reject(self, roe: RoE, phase: Phase, agent: str, reason: str) -> ScopeViolation:
         self._log(roe.engagement_id, agent, ISSUE_ACTION, phase.value, Result.BLOCKED, reason)
-        return ScopeViolation(f"emisión de token {phase.value} rechazada: {reason}")
+        return ScopeViolation(f"emisión de token {phase.value} rechazada: {reason}", reason)
 
     def issue(self, roe: RoE, phase: Phase, now: datetime | None = None,
               agent: str = "scope-guard") -> ScopeToken:

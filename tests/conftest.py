@@ -35,12 +35,12 @@ def fake_dns(host: str) -> list[str]:
 
 
 def make_token(phase=Phase.RECON, cidrs=("10.0.0.0/24",), domains=("lab.example.test",),
-               start=None, end=None, engagement_id="eng-1"):
+               start=None, end=None, engagement_id="eng-1", excluded=()):
     now = time.time()
     return _sign(
         engagement_id=engagement_id, allowed_cidrs=cidrs, allowed_domains=domains,
         window_start=now - 5 if start is None else start,
-        window_end=now + 600 if end is None else end, phase=phase)
+        window_end=now + 600 if end is None else end, phase=phase, excluded=excluded)
 
 
 @pytest.fixture

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import yaml
 
+from harness.contracts import TOOL_ERROR_REASONS
+
 _HOST_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _PROFILES = Path(__file__).resolve().parent.parent / "profiles.yaml"
 
@@ -18,7 +20,7 @@ class InvalidTarget(ValueError): ...
 class ForbiddenArgument(ValueError): ...
 
 
-TOOL_ERRORS = frozenset({"timeout", "binary_missing", "exit_code", "invalid_output"})
+TOOL_ERRORS = TOOL_ERROR_REASONS
 
 
 class ToolFailure(Exception):
