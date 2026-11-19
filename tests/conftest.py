@@ -1,10 +1,20 @@
+import dataclasses
 import time
 
 import pytest
 
-from harness.contracts import (Action, AuditLog, Guard, Harness, KillSwitch, Phase,
-                               ScopeToken)
+from harness.contracts import Action, AuditLog, Guard, Harness, KillSwitch, Phase, ScopeToken
 from harness.policy_loader import phase_allowlist
+from harness.tokens import TokenIssuer
+
+# Emisor de prueba con clave fija. Los tests firman tokens sin pasar por un RoE usando el
+# método privado `_mac`: eso vive solo acá, no en el código de producción.
+TEST_ISSUER = TokenIssuer(AuditLog(), key=b"t" * 32)
+
+
+def _sign(**fields) -> ScopeToken:
+    unsigned = ScopeToken(**fields)
+    return dataclasses.replace(unsigned, mac=TEST_ISSUER._mac(unsigned))
 
 
 class FakeAdapter:
@@ -20,9 +30,10 @@ class FakeAdapter:
 def make_token(phase=Phase.RECON, cidrs=("10.0.0.0/24",), domains=("lab.example.test",),
                start=None, end=None, engagement_id="eng-1"):
     now = time.time()
-    return ScopeToken(engagement_id, cidrs, domains,
-                      now - 5 if start is None else start,
-                      now + 600 if end is None else end, phase)
+    return _sign(
+        engagement_id=engagement_id, allowed_cidrs=cidrs, allowed_domains=domains,
+        window_start=now - 5 if start is None else start,
+        window_end=now + 600 if end is None else end, phase=phase)
 
 
 @pytest.fixture
@@ -41,7 +52,7 @@ def env():
         "poc_catalog.run_parametrized": FakeAdapter("poc_catalog.run_parametrized",
                                                     (Phase.VALIDATE,)),
     }
-    return Harness(guard, audit, adapters, ks), guard, audit, ks, adapters
+    return Harness(guard, audit, adapters, ks, TEST_ISSUER), guard, audit, ks, adapters
 
 
 def act(name, phase, **kw):

@@ -46,6 +46,8 @@ class ScopeToken:
     window_start: float
     window_end: float
     phase: Phase
+    excluded: tuple[str, ...] = ()       # exclusiones del RoE: prevalecen sobre el alcance
+    mac: str = ""                         # HMAC del emisor (harness/tokens.py)
 
     def is_live(self, now: float | None = None) -> bool:
         now = time.time() if now is None else now
@@ -73,6 +75,8 @@ class ToolAdapter(Protocol):
 BLOCK_REASONS = frozenset({
     "out_of_scope", "token_expired", "token_invalid", "wrong_phase",
     "not_allowlisted", "destructive", "no_adapter", "adapter_phase",
+    "token_revoked", "excluded", "roe_invalid", "roe_tampered", "phase_not_in_roe",
+    "outside_window",
 })
 
 
@@ -131,7 +135,25 @@ class Guard:
         canon = normalize_target(target)
         if canon is None or not self._in_scope(canon, token):
             return "out_of_scope"
+        if self._excluded(canon, token):
+            return "excluded"
         return None
+
+    @staticmethod
+    def _excluded(canon: str, token: ScopeToken) -> bool:
+        for ex in token.excluded:
+            try:
+                net = ipaddress.ip_network(ex)
+            except ValueError:
+                if canon == ex or canon.endswith("." + ex):
+                    return True
+                continue
+            try:
+                if ipaddress.ip_address(canon) in net:
+                    return True
+            except ValueError:
+                continue
+        return False
 
     def is_allowed(self, action: Action, target: str, token: ScopeToken) -> bool:
         return self.check(action, target, token) is None
@@ -150,6 +172,11 @@ class Guard:
 Entry = dict[str, Any]
 EVIDENCE_RE = re.compile(r"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*#sha256=[0-9a-f]{64}$")
 KILLSWITCH_ACTION = "killswitch.engage"
+
+
+def phase_label(token: ScopeToken) -> str:
+    """Fase para la bitácora, aun si el token trae un tipo inesperado (se registra igual)."""
+    return token.phase.value if isinstance(token.phase, Phase) else str(token.phase)
 
 
 def entry_hash(entry: Entry) -> str:
@@ -211,16 +238,25 @@ class AuditLog:
                result: Result, reason: str | None = None,
                evidence: str | None = None) -> Entry:
         return self._append(engagement=token.engagement_id, agent=agent, action=action.name,
-                            target=target, phase=token.phase.value, result=result,
+                            target=target, phase=phase_label(token), result=result,
                             reason=reason, evidence=evidence)
 
+    def record_control(self, engagement_id: str, agent: str, action: str, target: str,
+                       result: Result, reason: str | None = None) -> Entry:
+        """Registro de control (emisión, revocación, kill switch): fase `control`."""
+        return self._append(engagement=engagement_id, agent=agent, action=action,
+                            target=target, phase="control", result=result, reason=reason)
+
     def record_kill(self, engagement_id: str, agent: str) -> Entry:
-        return self._append(engagement=engagement_id, agent=agent, action=KILLSWITCH_ACTION,
-                            target=engagement_id, phase="control", result=Result.ABORTED)
+        return self.record_control(engagement_id, agent, KILLSWITCH_ACTION, engagement_id,
+                                   Result.ABORTED)
+
+    def control_engagements(self, action: str, result: Result = Result.ABORTED) -> set[str]:
+        return {e["engagement"] for e in self.entries if e["action"] == action
+                and e["phase"] == "control" and e["result"] == result.value}
 
     def killed_engagements(self) -> set[str]:
-        return {e["engagement"] for e in self.entries
-                if e["action"] == KILLSWITCH_ACTION and e["phase"] == "control"}
+        return self.control_engagements(KILLSWITCH_ACTION)
 
     def verify_integrity(self) -> None:
         error = verify_chain(self.entries, self.genesis)
@@ -234,7 +270,10 @@ class AuditSink(Protocol):
     def record(self, agent: str, action: Action, target: str, token: ScopeToken,
                result: Result, reason: str | None = None,
                evidence: str | None = None) -> Entry: ...
+    def record_control(self, engagement_id: str, agent: str, action: str, target: str,
+                       result: Result, reason: str | None = None) -> Entry: ...
     def record_kill(self, engagement_id: str, agent: str) -> Entry: ...
+    def control_engagements(self, action: str, result: Result = ...) -> set[str]: ...
     def killed_engagements(self) -> set[str]: ...
     def verify_integrity(self) -> None: ...
 
@@ -265,10 +304,16 @@ class KillSwitch:
         raise AttributeError("el kill switch no se modifica por atributo; usá engage()")
 
 
+class TokenVerifier(Protocol):
+    def verify(self, token: ScopeToken) -> str | None: ...
+
+
 class Harness:
     def __init__(self, guard: Guard, audit: AuditSink,
-                 tools: dict[str, ToolAdapter], killswitch: KillSwitch):
+                 tools: dict[str, ToolAdapter], killswitch: KillSwitch,
+                 issuer: TokenVerifier):
         self.guard, self.audit, self.tools, self.killswitch = guard, audit, tools, killswitch
+        self.issuer = issuer
         for engagement_id in audit.killed_engagements():   # kill switch persistente
             killswitch.engage(engagement_id)
 
@@ -290,7 +335,9 @@ class Harness:
         if self.killswitch.is_engaged(token.engagement_id):
             self.audit.record(agent, action, target, token, Result.ABORTED)
             raise KillSwitchEngaged()
-        reason = "token_expired" if not token.is_live() else self.guard.check(action, target, token)
+        reason = (self.issuer.verify(token)
+                  or ("token_expired" if not token.is_live() else None)
+                  or self.guard.check(action, target, token))
         if reason is not None:
             self.audit.record(agent, action, target, token, Result.BLOCKED, reason)
             raise ScopeViolation(f"{action.name} sobre {target} bloqueada: {reason}")

@@ -79,3 +79,19 @@ Python no impide construir un objeto, pero un token sin MAC válido no sirve par
 ## Riesgos
 - Si la clave HMAC queda en una variable de entorno compartida con los agentes, se pierde la garantía. Mitigación: los agentes no tienen acceso al entorno del harness (se documenta para el sandbox del 006).
 - Un reloj del host manipulado afecta la ventana. Fuera de alcance: se asume el reloj del host del laboratorio.
+
+## Revisión del `security-reviewer` (implementación)
+Corregido, cada uno con su test:
+- **`issue()` no confía en el objeto `RoE`:** vuelve a parsear su fuente. Un `dataclasses.replace(roe, cidrs=("0.0.0.0/0",))` ya no amplía el token.
+- **Sin firma de tokens fuera del emisor:** el método `_mint_for_tests` salió del código de producción y la firma de prueba vive en `tests/conftest.py`. El test estático también busca `X.ScopeToken(` y `._mac` por atributo.
+- **La clave no llega a las herramientas:** se saca de `os.environ` al leerla y los adaptadores corren con `safe_env()`, sin `PTAAS_*` ni credenciales. `repr(issuer)` no la muestra.
+- **Revocación:** se lee de la bitácora en cada `verify`/`issue`, así que vale entre emisores y entre reinicios. El emisor ahora exige una bitácora.
+- **Tokens con tipos raros** (fase como texto, MAC no ASCII o no texto): dan `token_invalid` y se registran como BLOCKED, sin excepciones crudas.
+- **RoE malformado** (`scope: []`, fechas fuera de rango, `!!set`, `!!binary`): da `roe_invalid`, nunca una excepción cruda.
+- **Exclusiones que cubren todo por unión** (dos `/25` sobre un `/24`): el RoE se rechaza.
+
+Limitaciones aceptadas:
+- **Aprobación no autenticada (D3):** cualquiera puede recalcular `roe_sha256`. La firma del aprobador (Ed25519) queda como mejora.
+- **Exclusiones textuales:** excluir `10.99.0.1` no bloquea `dvwa.lab.test` si ese nombre resuelve a esa IP. Resolver y volver a validar antes de actuar es el ataque A4 y se hace en los adaptadores reales del change 004.
+- **Mismo proceso:** código malicioso dentro del proceso del harness puede leer atributos privados (`_TokenIssuer__key`). La defensa es de arquitectura: los agentes no corren en ese proceso, solo llegan por `Harness.invoke`.
+- **Borde de la ventana:** `is_live` incluye el instante final y `issue` lo excluye. Es inofensivo, porque no se emite un token de duración cero.

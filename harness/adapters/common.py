@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -61,9 +62,16 @@ def reject_forbidden(argv: list[str], forbidden: list[str]) -> None:
 
 Runner = Callable[[list[str], int], str]
 
+_SECRET_PREFIXES = ("PTAAS_", "ANTHROPIC_", "AWS_", "GITHUB_", "GH_")
+
+
+def safe_env() -> dict[str, str]:
+    """Entorno para las herramientas: sin secretos del harness ni credenciales."""
+    return {k: v for k, v in os.environ.items() if not k.startswith(_SECRET_PREFIXES)}
+
 
 def default_runner(argv: list[str], timeout_s: int) -> str:
     """Ejecuta SIN shell, con timeout. Se inyecta un fake en los tests."""
     proc = subprocess.run(argv, shell=False, capture_output=True, text=True,
-                          timeout=timeout_s, check=False)
+                          timeout=timeout_s, check=False, env=safe_env())
     return proc.stdout

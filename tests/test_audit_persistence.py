@@ -10,7 +10,7 @@ import pytest
 from harness.audit import AuditIntegrityError, SqliteAuditLog, verify_file
 from harness.contracts import Action, Guard, Harness, KillSwitch, KillSwitchEngaged, Phase, Result
 from harness.policy_loader import phase_allowlist
-from tests.conftest import FakeAdapter, act, make_token
+from tests.conftest import TEST_ISSUER, FakeAdapter, act, make_token
 
 ROOT = Path(__file__).parents[1]
 
@@ -144,7 +144,8 @@ def test_inicio_de_cadena_trasplantado(tmp_path):
 
 def _harness(log: SqliteAuditLog) -> tuple[Harness, FakeAdapter]:
     adapter = FakeAdapter("httpx.probe", (Phase.RECON,))
-    return Harness(Guard(phase_allowlist()), log, {"httpx.probe": adapter}, KillSwitch()), adapter
+    return Harness(Guard(phase_allowlist()), log, {"httpx.probe": adapter}, KillSwitch(),
+                   TEST_ISSUER), adapter
 
 
 def test_manipulacion_durante_el_engagement(tmp_path):
