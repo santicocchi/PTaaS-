@@ -10,12 +10,27 @@ from pathlib import Path
 
 import yaml
 
+from harness.contracts import TOOL_ERROR_REASONS
+
 _HOST_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _PROFILES = Path(__file__).resolve().parent.parent / "profiles.yaml"
 
 
 class InvalidTarget(ValueError): ...
 class ForbiddenArgument(ValueError): ...
+
+
+TOOL_ERRORS = TOOL_ERROR_REASONS
+
+
+class ToolFailure(Exception):
+    """La herramienta no terminó bien. `kind` es uno de TOOL_ERRORS."""
+
+    def __init__(self, kind: str) -> None:
+        if kind not in TOOL_ERRORS:
+            raise ValueError(f"tipo de error desconocido: {kind}")
+        super().__init__(kind)
+        self.kind = kind
 
 
 def load_profiles(path: Path = _PROFILES) -> dict:
@@ -53,11 +68,17 @@ def validate_url(url: str) -> str:
     return url.strip()
 
 
+def _flag_name(arg: str) -> str:
+    """`--script=vuln`, `-script` y `--script` son el mismo flag: nmap (getopt_long_only) y las
+    herramientas en Go aceptan uno o dos guiones y la forma `flag=valor`."""
+    return arg.lstrip("-").split("=", 1)[0]
+
+
 def reject_forbidden(argv: list[str], forbidden: list[str]) -> None:
+    banned = {_flag_name(f) for f in forbidden}
     for a in argv:
-        for f in forbidden:
-            if a == f or a.startswith(f + "="):
-                raise ForbiddenArgument(f"argumento prohibido: {a}")
+        if a.startswith("-") and _flag_name(a) in banned:
+            raise ForbiddenArgument(f"argumento prohibido: {a}")
 
 
 Runner = Callable[[list[str], int], str]
@@ -66,12 +87,53 @@ _SECRET_PREFIXES = ("PTAAS_", "ANTHROPIC_", "AWS_", "GITHUB_", "GH_")
 
 
 def safe_env() -> dict[str, str]:
-    """Entorno para las herramientas: sin secretos del harness ni credenciales."""
-    return {k: v for k, v in os.environ.items() if not k.startswith(_SECRET_PREFIXES)}
+    """Entorno para las herramientas: sin secretos del harness, sin credenciales y sin proxy
+    (el tráfico al laboratorio nunca sale por un proxy; httpx lo tomaría del entorno)."""
+    return {k: v for k, v in os.environ.items()
+            if not k.startswith(_SECRET_PREFIXES) and not _is_proxy_var(k)}
+
+
+def _is_proxy_var(name: str) -> bool:
+    """HTTPS_PROXY, http_proxy, ALL_PROXY y variantes (npm_config_https_proxy…), menos NO_PROXY."""
+    low = name.lower()
+    return low.endswith("_proxy") and low != "no_proxy"
 
 
 def default_runner(argv: list[str], timeout_s: int) -> str:
-    """Ejecuta SIN shell, con timeout. Se inyecta un fake en los tests."""
-    proc = subprocess.run(argv, shell=False, capture_output=True, text=True,
-                          timeout=timeout_s, check=False, env=safe_env())
+    """Ejecuta SIN shell, con timeout. Se inyecta un fake en los tests.
+
+    Lanza ToolFailure si el binario no está, si se pasa del timeout o si sale con error.
+    """
+    try:
+        # stdin vacío: httpx (y otras) leen objetivos de stdin si es un pipe.
+        # La salida es dato no confiable: bytes no UTF-8 se reemplazan en vez de romper.
+        proc = subprocess.run(argv, shell=False, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              stdin=subprocess.DEVNULL, timeout=timeout_s, check=False,
+                              env=safe_env())
+    except FileNotFoundError as exc:
+        raise ToolFailure("binary_missing") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ToolFailure("timeout") from exc
+    except OSError as exc:                     # sin permiso de ejecución, formato inválido…
+        raise ToolFailure("exec_error") from exc
+    if proc.returncode != 0:
+        raise ToolFailure("exit_code")
     return proc.stdout
+
+
+def run_tool(runner: Runner, argv: list[str], timeout_s: int) -> tuple[str, None] | tuple[
+        None, str]:
+    """(salida, None) si anduvo; (None, tipo de error) si no. Nunca lanza por la herramienta."""
+    try:
+        return runner(argv, timeout_s), None
+    except ToolFailure as exc:
+        return None, exc.kind
+    except FileNotFoundError:
+        return None, "binary_missing"
+    except subprocess.TimeoutExpired:
+        return None, "timeout"
+
+
+def tool_error(tool: str, target: str, kind: str) -> dict[str, str]:
+    return {"tool": tool, "target": target, "status": "error", "error": kind}

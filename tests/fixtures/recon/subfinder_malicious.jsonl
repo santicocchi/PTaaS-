@@ -1,0 +1,4 @@
+{"host":"-oN /tmp/x","input":"dvwa.lab.test","source":"crtsh"}
+{"host":"a\u0007b.dvwa.lab.test","input":"dvwa.lab.test","source":"crtsh"}
+{"host":"10.99.0.9","input":"dvwa.lab.test","source":"crtsh"}
+{"host":"ok.dvwa.lab.test","input":"dvwa.lab.test","source":"crtsh"}

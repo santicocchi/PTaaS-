@@ -1,7 +1,14 @@
 """Adaptador nuclei.safe_templates: solo templates curados y tags permitidos."""
 from __future__ import annotations
 
-from harness.adapters.common import Runner, default_runner, load_profiles, validate_url
+from harness.adapters.common import (
+    Runner,
+    default_runner,
+    load_profiles,
+    run_tool,
+    tool_error,
+    validate_url,
+)
 from harness.contracts import Action, Phase, ScopeToken
 
 
@@ -24,16 +31,20 @@ def build_argv(url: str, profile: dict | None = None) -> list[str]:
 
 
 class NucleiSafeTemplates:
-    name = "nuclei.safe_templates"
-    allowed_phases = (Phase.ANALYZE,)
-    destructive = False
+    name: str = "nuclei.safe_templates"
+    allowed_phases: tuple[Phase, ...] = (Phase.ANALYZE,)
+    destructive: bool = False
 
     def __init__(self, runner: Runner = default_runner, profile: dict | None = None):
         self._runner = runner
         self._profile = profile or load_profiles()["nuclei"]
 
-    def run(self, action: Action, target: str, token: ScopeToken) -> dict:
+    def run(self, action: Action, target: str, token: ScopeToken,
+            addresses: tuple[str, ...]) -> dict:
+        # TODO(005, task 4.1): recibir host y usar `addresses` como httpx (IP fijada + Host).
         argv = build_argv(target, self._profile)
-        raw = self._runner(argv, self._profile["timeout_s"])
+        raw, error = run_tool(self._runner, argv, self._profile["timeout_s"])
+        if raw is None:
+            return tool_error("nuclei", target, str(error))
         lines = [ln for ln in raw.splitlines() if ln.strip()]
         return {"tool": "nuclei", "target": target, "format": "jsonl", "lines": lines}

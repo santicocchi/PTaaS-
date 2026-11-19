@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol
 
+from harness.ratelimit import RateLimiter
+
 
 class Phase(str, Enum):
     RECON = "recon"
@@ -34,7 +36,13 @@ class Result(str, Enum):
     ABORTED = "ABORTED"
 
 
-class ScopeViolation(Exception): ...
+class ScopeViolation(Exception):
+    """Acción bloqueada. `reason` es uno de BLOCK_REASONS (lo usa el orquestador del 004)."""
+
+    def __init__(self, message: str, reason: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+
 class KillSwitchEngaged(Exception): ...
 class AuditIntegrityError(Exception): ...
 
@@ -68,8 +76,13 @@ class ToolAdapter(Protocol):
     allowed_phases: tuple[Phase, ...]
     destructive: bool
 
-    def run(self, action: Action, target: str, token: ScopeToken) -> dict:
-        """Debe devolver JSON parseable. Nunca ejecuta fuera de `target`."""
+    def run(self, action: Action, target: str, token: ScopeToken,
+            addresses: tuple[str, ...]) -> dict:
+        """Debe devolver JSON parseable. Nunca ejecuta fuera de `target`.
+
+        `addresses` son las IP que validó el Harness. Un adaptador que se conecta al objetivo
+        DEBE usarlas en lugar de dejar que la herramienta resuelva el nombre otra vez (004).
+        """
         ...
 
 
@@ -79,6 +92,10 @@ BLOCK_REASONS = frozenset({
     "token_revoked", "excluded", "roe_invalid", "roe_tampered", "phase_not_in_roe",
     "outside_window", "dns_out_of_scope", "dns_unresolved",
 })
+
+# Motivos de un registro no BLOCKED: solo errores de herramienta (change 004).
+TOOL_ERROR_REASONS = frozenset({"timeout", "binary_missing", "exec_error", "exit_code",
+                                "invalid_output", "adapter_error"})
 
 Resolver = Callable[[str], list[str]]
 
@@ -113,7 +130,8 @@ def normalize_target(target: str) -> str | None:
     if not all(c.isalnum() or c in "-." for c in host):   # sin ':', '/', '%', espacios…
         return None
     labels = host.split(".")
-    if any(not lbl or len(lbl) > 63 or lbl.startswith("-") for lbl in labels):
+    if any(not lbl or len(lbl) > 63 or lbl.startswith("-") or lbl.endswith("-")
+           for lbl in labels):
         return None
     return host
 
@@ -232,6 +250,10 @@ def make_entry(*, prev: str, engagement: str, agent: str, action: str, target: s
     if result is Result.BLOCKED:
         if reason not in BLOCK_REASONS:
             raise ValueError(f"motivo de bloqueo inválido: {reason!r}")
+        body["reason"] = reason
+    elif reason is not None:
+        if result not in (Result.ABORTED, Result.PENDING_HITL) or reason not in TOOL_ERROR_REASONS:
+            raise ValueError(f"motivo inválido para {result.value}: {reason!r}")
         body["reason"] = reason
     if evidence is not None:
         if not EVIDENCE_RE.match(evidence) or ".." in evidence.split("/"):
@@ -355,10 +377,16 @@ class TokenVerifier(Protocol):
 class Harness:
     def __init__(self, guard: Guard, audit: AuditSink,
                  tools: dict[str, ToolAdapter], killswitch: KillSwitch,
-                 issuer: TokenVerifier, resolver: Resolver = system_resolver):
+                 issuer: TokenVerifier, resolver: Resolver = system_resolver,
+                 limiter: RateLimiter | None = None):
         self.guard, self.audit, self.tools, self.killswitch = guard, audit, tools, killswitch
         self.issuer = issuer
         self.resolver = resolver
+        # 004: rate limit por IP de destino para todo llamador (no solo el orquestador).
+        if limiter is None:
+            from harness.policy_loader import load_policy
+            limiter = RateLimiter(int(load_policy()["limits"]["rate_limit_rps_per_target"]))
+        self.limiter = limiter
         for engagement_id in audit.killed_engagements():   # kill switch persistente
             killswitch.engage(engagement_id)
 
@@ -385,19 +413,22 @@ class Harness:
                   or self.guard.check(action, target, token))
         if reason is not None:
             self.audit.record(agent, action, target, token, Result.BLOCKED, reason)
-            raise ScopeViolation(f"{action.name} sobre {target} bloqueada: {reason}")
+            raise ScopeViolation(f"{action.name} sobre {target} bloqueada: {reason}", reason)
         canon = normalize_target(target)
         assert canon is not None          # garantizado por guard.check
         adapter = self.tools.get(action.name)
         if adapter is None:
             self.audit.record(agent, action, canon, token, Result.BLOCKED, "no_adapter")
-            raise ScopeViolation(f"capability sin adaptador registrado: {action.name}")
+            raise ScopeViolation(f"capability sin adaptador registrado: {action.name}",
+                                 "no_adapter")
         if token.phase not in adapter.allowed_phases:
             self.audit.record(agent, action, canon, token, Result.BLOCKED, "adapter_phase")
-            raise ScopeViolation(f"adaptador {adapter.name} no habilitado en {token.phase}")
+            raise ScopeViolation(f"adaptador {adapter.name} no habilitado en {token.phase}",
+                                 "adapter_phase")
         if getattr(adapter, "destructive", True) is not False:   # R14: lo declara el adaptador
             self.audit.record(agent, action, canon, token, Result.BLOCKED, "destructive")
-            raise ScopeViolation(f"adaptador {adapter.name} es destructivo")
+            raise ScopeViolation(f"adaptador {adapter.name} es destructivo", "destructive")
+        addresses: tuple[str, ...] = (canon,)
         if not _is_ip(canon):             # A4: el nombre debe resolver solo a IP en alcance
             try:
                 ips = self.resolver(canon)
@@ -406,15 +437,24 @@ class Harness:
             reason = self.guard.check_resolved(canon, ips, token)
             if reason is not None:
                 self.audit.record(agent, action, canon, token, Result.BLOCKED, reason)
-                raise ScopeViolation(f"{canon} resuelve fuera de alcance: {reason}")
+                raise ScopeViolation(f"{canon} resuelve fuera de alcance: {reason}", reason)
+            # 004: la herramienta usa estas IP y no vuelve a resolver (DNS rebinding).
+            addresses = tuple(sorted({str(normalize_target(ip)) for ip in ips}))
         if self.guard.needs_approval(action, token) and not self.guard.approved(action, canon,
                                                                                   token):
             self.audit.record(agent, action, canon, token, Result.PENDING_HITL)
             return {"status": "PENDING_HITL"}
+        for address in addresses:             # puede esperar: el kill switch se mira después
+            self.limiter.acquire(address)
         if self.killswitch.is_engaged(token.engagement_id):   # pudo activarse mientras tanto
             self.audit.record(agent, action, canon, token, Result.ABORTED)
             raise KillSwitchEngaged()
         # Write-ahead: la decisión OK queda en bitácora ANTES de ejecutar. Si no se puede
         # registrar (otro engagement, base bloqueada, disco lleno), la herramienta no corre.
         self.audit.record(agent, action, canon, token, Result.OK)
-        return adapter.run(action, canon, token)
+        try:
+            return adapter.run(action, canon, token, addresses)
+        except Exception:  # noqa: BLE001 - el OK ya está escrito: se cierra con ABORTED
+            self.audit.record(agent, action, canon, token, Result.ABORTED, "adapter_error")
+            return {"tool": action.name, "target": canon, "status": "error",
+                    "error": "adapter_error"}

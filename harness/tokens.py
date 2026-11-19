@@ -13,7 +13,17 @@ import os
 import secrets
 from datetime import datetime
 
-from harness.contracts import AuditSink, Phase, Result, ScopeToken, ScopeViolation
+from harness.contracts import (
+    AuditSink,
+    Phase,
+    Resolver,
+    Result,
+    ScopeToken,
+    ScopeViolation,
+    _is_ip,
+    normalize_target,
+    system_resolver,
+)
 from harness.policy_loader import load_policy
 from harness.roe import RoE, parse_roe
 
@@ -31,7 +41,8 @@ def _payload(token: ScopeToken) -> bytes:
 
 class TokenIssuer:
     def __init__(self, audit: AuditSink, key: bytes | None = None,
-                 policy: dict | None = None) -> None:  # type: ignore[type-arg]
+                 policy: dict | None = None,  # type: ignore[type-arg]
+                 resolver: Resolver = system_resolver) -> None:
         if key is None:
             # Se saca del entorno para que no la hereden los procesos hijos (nmap, nuclei…).
             env = os.environ.pop("PTAAS_TOKEN_KEY", None)
@@ -41,6 +52,7 @@ class TokenIssuer:
         self.__key = key
         self._audit = audit
         self._policy = policy or load_policy()
+        self._resolver = resolver
 
     def __repr__(self) -> str:                # que la clave nunca aparezca en un log
         return "TokenIssuer(<clave oculta>)"
@@ -58,7 +70,7 @@ class TokenIssuer:
 
     def _reject(self, roe: RoE, phase: Phase, agent: str, reason: str) -> ScopeViolation:
         self._log(roe.engagement_id, agent, ISSUE_ACTION, phase.value, Result.BLOCKED, reason)
-        return ScopeViolation(f"emisión de token {phase.value} rechazada: {reason}")
+        return ScopeViolation(f"emisión de token {phase.value} rechazada: {reason}", reason)
 
     def issue(self, roe: RoE, phase: Phase, now: datetime | None = None,
               agent: str = "scope-guard") -> ScopeToken:
@@ -74,10 +86,30 @@ class TokenIssuer:
         ttl = self._policy["phases"][phase.value]["token_ttl_minutes"] * 60
         unsigned = ScopeToken(roe.engagement_id, roe.cidrs, roe.domains, ts,
                               min(ts + ttl, roe.window_end.timestamp()), phase,
-                              excluded=roe.excluded)
+                              excluded=self._pin_excluded(roe.excluded))
         token = dataclasses.replace(unsigned, mac=self._mac(unsigned))
         self._log(roe.engagement_id, agent, ISSUE_ACTION, phase.value, Result.OK)
         return token
+
+    def _pin_excluded(self, excluded: tuple[str, ...]) -> tuple[str, ...]:
+        """Suma al token las IP de cada nombre excluido (004, security-reviewer #1).
+
+        Si no, un host excluido por nombre se alcanzaba por su IP o por otro nombre que
+        resolviera a la misma IP. Las IP quedan fijadas al emitir y firmadas en el MAC.
+        """
+        pinned: list[str] = list(excluded)
+        for name in excluded:
+            if _is_ip(name) or "/" in name:
+                continue
+            try:
+                ips = self._resolver(name)
+            except Exception:  # noqa: BLE001 - si no resuelve, queda la exclusión por nombre
+                ips = []
+            for raw in ips:
+                ip = normalize_target(str(raw))
+                if ip is not None and _is_ip(ip) and ip not in pinned:
+                    pinned.append(ip)
+        return tuple(pinned)
 
     def verify(self, token: ScopeToken) -> str | None:
         """None si el token es auténtico y no fue revocado; si no, el motivo.

@@ -14,6 +14,9 @@ class Asset:
     address: str
     source_tool: str
     technologies: tuple[str, ...] = ()
+    iteration: int = 0                 # versión del grafo en la que apareció (change 004)
+    in_scope: bool = True
+    reason: str | None = None          # motivo si está fuera de alcance
 
     def __post_init__(self):
         if not self.source_tool:

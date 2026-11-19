@@ -1,7 +1,7 @@
 # Delta — tool-adapters (change 004)
 
 Tests: tests/tool_adapters/test_subfinder.py, tests/tool_adapters/test_httpx.py,
-tests/tool_adapters/test_tool_errors.py
+tests/tool_adapters/test_tool_errors.py, tests/tool_adapters/test_nmap_output.py
 
 ## ADDED Requirement: subfinder pasivo y acotado
 `subfinder.enum` DEBE aceptar solo un dominio (nunca una IP ni un CIDR), DEBE correr con los argumentos fijos del perfil y DEBE rechazar los argumentos que amplían las fuentes o lo vuelven activo.
@@ -48,7 +48,7 @@ Cada adaptador DEBE validar cada registro de salida contra su schema. Los regist
 - THEN se descarta porque no normaliza como objetivo
 
 ## ADDED Requirement: Errores de herramienta sin excepción
-Ante timeout, binario ausente o código de salida distinto de 0, el adaptador DEBE devolver un resultado de error tipado (`timeout`, `binary_missing`, `exit_code`) en lugar de lanzar.
+Ante timeout, binario ausente, binario que no se puede ejecutar o código de salida distinto de 0, el adaptador DEBE devolver un resultado de error tipado (`timeout`, `binary_missing`, `exec_error`, `exit_code`) en lugar de lanzar. Una salida con bytes que no son UTF-8 NO DEBE romper la ejecución.
 
 ### Scenario: binario ausente
 - GIVEN un runner que no encuentra el binario de httpx
@@ -67,3 +67,29 @@ El entorno con el que corren las herramientas NO DEBE incluir variables de proxy
 - GIVEN un harness corriendo con `HTTPS_PROXY` definido
 - WHEN se arma el entorno de una herramienta
 - THEN la variable no está
+
+## ADDED Requirement: Un flag prohibido se detecta en cualquier forma
+nmap y las herramientas escritas en Go aceptan un flag con uno o dos guiones y con la forma `flag=valor`. El control de argumentos prohibidos DEBE reconocer todas esas formas.
+
+### Scenario: el mismo flag escrito distinto
+- GIVEN `--script` prohibido en el perfil de nmap
+- WHEN el comando lleva `-script`, `--script=vuln` o `-script=vuln`
+- THEN se rechaza
+
+### Scenario: perfiles de httpx y subfinder
+- GIVEN los perfiles vigentes
+- WHEN se agrega `-csp-probe`, `-tls-probe`, `-ss`, `-p` u `-o` a httpx, o `-o`, `-oD`, `-r` o `-rL` a subfinder
+- THEN se rechaza
+
+## ADDED Requirement: La salida solo describe lo que se escaneó
+`nmap.service_scan` DEBE descartar los hosts de la salida que no sean una de las IP escaneadas, y `httpx.probe` los que no sean una de las IP sondeadas. Una respuesta hostil NO DEBE poder inflar el grafo: la lista de tecnologías de un servicio DEBE acotarse.
+
+### Scenario: nmap reporta otra IP
+- GIVEN una salida de nmap con un host 10.99.0.3 y un escaneo sobre 10.99.0.200
+- WHEN se parsea
+- THEN no entra ningún servicio y el estado es `invalid_output`
+
+### Scenario: lista de tecnologías enorme
+- GIVEN una línea de httpx con 500 tecnologías
+- WHEN se parsea
+- THEN el servicio queda con 20

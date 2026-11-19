@@ -55,9 +55,11 @@ def test_adaptadores_ejecutan_sin_shell_via_runner_inyectado():
     def runner(argv, timeout):
         vistos.append((argv, timeout)); return '{"template-id":"x"}\n'
     out = NucleiSafeTemplates(runner).run(act("nuclei.safe_templates", Phase.ANALYZE),
-                                          "http://dvwa.lab.test/", make_token(Phase.ANALYZE))
+                                          "http://dvwa.lab.test/", make_token(Phase.ANALYZE),
+                                          ("10.0.0.50",))
     assert out["lines"] == ['{"template-id":"x"}'] and isinstance(vistos[0][0], list)
-    NmapServiceScan(runner).run(act("nmap.service_scan", Phase.RECON), "10.0.0.5", make_token())
+    NmapServiceScan(runner).run(act("nmap.service_scan", Phase.RECON), "10.0.0.5", make_token(),
+                                ("10.0.0.5",))
     assert len(vistos) == 2
 
 

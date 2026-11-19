@@ -196,17 +196,22 @@ class SqliteAuditLog:
         El ancla en memoria detecta un truncado del final o un archivo reemplazado mientras el
         proceso corre. Entre reinicios eso exige un ancla externa (ver design.md, riesgos).
         """
+        # El ancla se lee ANTES que los registros: lo que otro hilo agregue después solo suma
+        # filas. Al revés, una escritura concurrente parecía un truncado (carrera, ver 004).
+        with self._anchor_lock:
+            anchor = self._anchor
         entries = self.entries
         error = verify_chain(entries, genesis(self.engagement_id), engagement=self.engagement_id)
-        if error is None and self._anchor is not None:
-            n, last_hash = self._anchor
+        if error is None and anchor is not None:
+            n, last_hash = anchor
             if len(entries) < n or entries[n - 1]["hash"] != last_hash:
                 error = f"faltan registros: se habían verificado {n} y el registro {n} no coincide"
         if error:
             raise AuditIntegrityError(error)
         if entries:
-            with self._anchor_lock:
-                self._anchor = (len(entries), entries[-1]["hash"])
+            with self._anchor_lock:             # el ancla solo avanza
+                if self._anchor is None or len(entries) > self._anchor[0]:
+                    self._anchor = (len(entries), entries[-1]["hash"])
 
 
 def main(argv: list[str]) -> int:

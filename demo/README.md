@@ -54,3 +54,30 @@ python -m harness.audit verify demo/out/demo-cp1-<fecha-hora>.sqlite3
   registro propio: es una limitación conocida del 003 (firma Ed25519 como mejora).
 - Los intentos fuera de alcance usan `203.0.113.7` (TEST-NET-3, rango reservado para
   documentación). Igual nunca se les envía nada: el Harness los corta antes del adaptador.
+
+---
+
+# Loop A: relevamiento de punta a punta (change 004)
+
+```bash
+python -m demo.loop_a                                                    # simulación
+docker compose -f lab/docker-compose.yml up -d --build                   # 1ª vez: runner con httpx y subfinder
+docker compose -f lab/docker-compose.yml exec runner python -m demo.loop_a --lab
+```
+
+Corre el orquestador real con los adaptadores reales (subfinder, httpx y nmap), todo por
+`Harness.invoke`. Al final muestra el grafo de activos (qué apareció en cada iteración, qué quedó
+fuera de alcance y por qué), lo que se entrega a correlación y la bitácora verificada.
+
+- **Simulación:** las herramientas no se ejecutan; cada una devuelve una salida grabada que pasa
+  por el mismo parseo que la real. Incluye un subdominio de afuera (`cdn.example.com`), Juice Shop
+  (excluido en el RoE) y una redirección a `203.0.113.7`: los tres quedan en el grafo como
+  "fuera de alcance" y ninguno llega a una herramienta.
+- **Laboratorio:** subfinder no encuentra nada porque sus fuentes están en internet y el runner
+  no tiene salida. El loop sigue con las semillas del RoE: httpx y nmap sobre `dvwa.lab.test`
+  (Apache 2.4.25). Juice Shop no se toca porque el RoE lo excluye.
+
+**El runner monta el proyecto de solo lectura.** Las herramientas procesan respuestas de los
+objetivos, que son datos hostiles; si algo saliera mal adentro del contenedor, no puede modificar
+el código del harness. Lo único escribible es `demo/out/`. Los tests (`pytest`) se corren en tu
+máquina, no en el runner.

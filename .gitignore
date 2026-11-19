@@ -33,4 +33,6 @@ node_modules/
 .claude/settings.local.json
 
 # Demo: bitácoras generadas por demo/checkpoint1.py
-demo/out/
+# (la carpeta existe para montarla en el runner del laboratorio)
+demo/out/*
+!demo/out/.gitkeep

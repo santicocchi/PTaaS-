@@ -21,10 +21,12 @@ from __future__ import annotations
 import argparse
 import copy
 import dataclasses
+import ipaddress
 import os
 import sqlite3
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
@@ -121,23 +123,31 @@ class CommandRecorder:
         return ""
 
 
-def lab_get(poc_id: str, params: dict[str, str]) -> ResponseRecord:
-    """GET dentro del laboratorio: sin proxy y sin seguir redirecciones (task 004 4.1)."""
+def lab_get(poc_id: str, params: dict[str, str], address: str) -> ResponseRecord:
+    """GET dentro del laboratorio: sin proxy, sin seguir redirecciones (004, A5) y a la IP que
+    validó el Harness, con el nombre en `Host` (004, DNS rebinding)."""
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args: Any, **kwargs: Any) -> None:
             return None
 
+    path = params["path"]
+    # La ruta tiene que empezar con "/": sin eso, "@otro.host/x" cambiaría el destino.
+    if not path.startswith("/") or path.startswith("//") or any(c <= " " for c in path):
+        raise ValueError(f"ruta inválida: {path!r}")
+    ip = ipaddress.ip_address(address)
+    netloc = f"[{ip}]" if ip.version == 6 else str(ip)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-    url = params["base_url"].rstrip("/") + params["path"]
+    host = urllib.parse.urlsplit(params["base_url"]).hostname or ""
+    request = urllib.request.Request(f"http://{netloc}{path}", headers={"Host": host})
     try:
-        with opener.open(url, timeout=10) as resp:
+        with opener.open(request, timeout=10) as resp:
             body = resp.read(65536).decode("utf-8", "replace")
             return ResponseRecord(resp.status, dict(resp.headers.items()), body)
     except urllib.error.HTTPError as err:          # 3xx/4xx/5xx también son respuesta
         return ResponseRecord(err.code, dict(err.headers.items()), "")
 
 
-def simulated_get(poc_id: str, params: dict[str, str]) -> ResponseRecord:
+def simulated_get(poc_id: str, params: dict[str, str], address: str) -> ResponseRecord:
     return ResponseRecord(200, {"Server": "Apache (respuesta de ejemplo)"}, "<html>…</html>")
 
 
@@ -151,14 +161,16 @@ class CatalogPoc:
     allowed_phases = (Phase.VALIDATE,)
     destructive = False
 
-    def __init__(self, sender: Callable[[str, dict[str, str]], ResponseRecord],
+    def __init__(self, sender: Callable[[str, dict[str, str], str], ResponseRecord],
                  poc_id: str = "POC-HDR-001", path: str = "/login.php") -> None:
         self.sender, self.poc_id, self.path = sender, poc_id, path
 
-    def run(self, action: Action, target: str, token: ScopeToken) -> dict[str, Any]:
+    def run(self, action: Action, target: str, token: ScopeToken,
+            addresses: tuple[str, ...]) -> dict[str, Any]:
         evidence = run_parametrized(load_catalog(), self.poc_id,
                                     {"base_url": f"http://{target}", "path": self.path},
-                                    approved=True, sender=self.sender)
+                                    approved=True,
+                                    sender=lambda pid, prm: self.sender(pid, prm, addresses[0]))
         return {"tool": "poc_catalog", "target": target, "poc_id": evidence.poc_id,
                 "status": evidence.status, "detail": evidence.detail}
 
