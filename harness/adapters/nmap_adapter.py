@@ -9,6 +9,8 @@ from harness.adapters.common import (
     default_runner,
     load_profiles,
     reject_forbidden,
+    run_tool,
+    tool_error,
     validate_target,
 )
 from harness.contracts import Action, Phase, ScopeToken
@@ -39,5 +41,7 @@ class NmapServiceScan:
             addresses: tuple[str, ...]) -> dict:
         # Escanea las IP que validó el Harness, nunca el nombre (DNS rebinding, 004).
         argv = build_argv(addresses, self._profile)
-        raw = self._runner(argv, self._profile["timeout_s"])
+        raw, error = run_tool(self._runner, argv, self._profile["timeout_s"])
+        if raw is None:
+            return tool_error("nmap", target, str(error))
         return {"tool": "nmap", "target": target, "format": "xml", "raw": raw}
