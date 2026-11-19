@@ -1,6 +1,6 @@
 # Spec — audit-log
 
-Tests: `tests/test_audit_and_policy.py`, `tests/test_authorization.py`, `tests/test_audit_persistence.py`, `tests/audit_log/test_tool_error_reasons.py`, `tests/audit_log/test_anchor_race.py`
+Tests: `tests/test_audit_and_policy.py`, `tests/test_authorization.py`, `tests/test_audit_persistence.py`, `tests/audit_log/test_tool_error_reasons.py`, `tests/audit_log/test_anchor_race.py`, `tests/authorization/test_review_004.py`
 
 ## Requirement: Registro total
 El sistema DEBE registrar toda decisión del harness: OK, BLOCKED, PENDING_HITL y ABORTED, con agente, acción, objetivo, fase, token/engagement y marca de tiempo.
@@ -135,7 +135,7 @@ Todo registro BLOCKED DEBE incluir un motivo de un conjunto cerrado: `out_of_sco
 <!-- Archivado desde el change 004-recon-loop-a -->
 
 ## Requirement: Motivo de un error de herramienta
-Un registro no BLOCKED PUEDE llevar motivo solo si pertenece al conjunto cerrado de errores de herramienta: `timeout`, `binary_missing`, `exit_code`, `invalid_output`. Cualquier otro motivo DEBE rechazarse al escribir.
+Un registro no BLOCKED PUEDE llevar motivo solo si pertenece al conjunto cerrado de errores de herramienta: `timeout`, `binary_missing`, `exec_error`, `exit_code`, `invalid_output` y `adapter_error`. Además, solo los resultados ABORTED y PENDING_HITL PUEDEN llevarlo. Cualquier otro motivo DEBE rechazarse al escribir.
 
 ### Scenario: herramienta que excede su timeout
 - GIVEN httpx que excede su timeout durante el loop A
@@ -146,3 +146,11 @@ Un registro no BLOCKED PUEDE llevar motivo solo si pertenece al conjunto cerrado
 - GIVEN un registro ABORTED con motivo "lo que sea"
 - WHEN se intenta escribir
 - THEN se rechaza
+
+## Requirement: Un adaptador que lanza después del OK queda abortado
+El write-ahead ya dejó un OK que dice que la acción se iba a ejecutar. Si el adaptador lanza una excepción, `Harness.invoke` DEBE registrar la misma acción como ABORTED con motivo `adapter_error` y DEBE devolver un error tipado, sin propagar la excepción.
+
+### Scenario: adaptador con un bug
+- GIVEN un adaptador que lanza `RuntimeError` dentro de `run`
+- WHEN `Harness.invoke` lo ejecuta
+- THEN la bitácora tiene el OK seguido de un ABORTED con `reason = adapter_error`, `invoke` devuelve `{"status": "error", "error": "adapter_error"}` y la cadena sigue íntegra

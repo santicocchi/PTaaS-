@@ -34,6 +34,8 @@ El loop A de este change no usa LLM. El orquestador (`harness/recon.py`) arma la
 Igual que nmap y nuclei, los argumentos fijos y los prohibidos viven en `profiles.yaml`. Prohibidos:
 - subfinder: `-all`, `-recursive`, `-nW`/`-active`, `-oI`/`-ip`, `-proxy`, `-dL`/`-list`, `-config`, `-pc`/`-provider-config`. Los dos primeros amplían las fuentes, los dos siguientes lo vuelven activo (resuelve los nombres), y el resto mete entrada o configuración que el perfil no controla.
 - httpx: `-fr`/`-follow-redirects`, `-fhr`/`-follow-host-redirects`, `-maxr`/`-max-redirects`, `-l`/`-list`, `-proxy`/`-http-proxy`, `-x` (métodos), `-body`, `-path`.
+- Agregados en la revisión: subfinder `-o`/`-output`, `-oD`/`-output-dir`, `-r`, `-rL` (archivos y resolvers propios); httpx `-p`/`-ports`, `-csp-probe`, `-tls-probe` (siguen a dominios del CSP o del certificado), `-ss`/`-screenshot`, `-config`, `-o`/`-output`.
+- El control acepta cualquier forma del flag: uno o dos guiones y `flag=valor`. nmap (getopt_long_only) y las herramientas en Go aceptan todas.
 
 Flags verificados contra httpx v1.12.0 y subfinder v2 (`-h`). Con `-u http://<ip> -H "Host: <nombre>"`, httpx manda el `Host` pedido, no hace consultas DNS y no prueba HTTPS. Ante un 302 no sigue la redirección y devuelve el destino en `location`.
 
@@ -72,6 +74,7 @@ Lo único que frena el loop son las barreras del Harness: kill switch, bitácora
 Respuesta a "¿cómo se versiona el grafo entre iteraciones?":
 - **Activo:** `id` (SHA-256 de `tipo:dirección` normalizada), `type` (`domain` | `ip` | `http_service`), `address`, `technologies`, `source_tool`, `iteration` (en la que apareció), `in_scope` (bool) y `reason` si está fuera.
 - **Persistencia:** SQLite append-only en `state/<engagement_id>.assets.sqlite3`, con triggers contra UPDATE y DELETE como la bitácora. Un activo ya visto no se vuelve a insertar (`id` único): eso es la deduplicación.
+- **Estado del loop:** la tabla `loop_events` (también append-only) guarda qué iteraciones terminaron, el motivo de parada y las herramientas deshabilitadas por HITL. Si el proceso se corta, el loop se retoma desde ahí: el tope cuenta entre corridas y una iteración cortada a la mitad se repite entera.
 - **Versión:** la versión del grafo es el número de iteración. "Activos nuevos" de la iteración *i* son las filas insertadas con `iteration = i`, y ese número es el que recibe `decide_recon`. Una tecnología nueva sobre un activo ya conocido se guarda como fila en `asset_tech`, que también es append-only, y no cuenta como activo nuevo.
 
 ### D9. Descubrimientos fuera de alcance (task 2.6)
@@ -84,7 +87,7 @@ Es defensa en profundidad: aunque el orquestador tuviera un bug y lo encolara, `
 
 ### D10. Rate limit
 - `httpx.probe` recibe `-rl` con `rate_limit_rps_per_target` de `policy.yaml`. nmap ya tiene `--max-rate`.
-- Además, el orquestador tiene un limitador por objetivo (token bucket con reloj inyectable) que no deja invocar más de `rate_limit_rps_per_target` acciones por segundo sobre el mismo host. Así el límite no depende solo del flag de cada herramienta, y se puede testear sin red.
+- Además, `Harness.invoke` tiene un limitador (ventana de un segundo, reloj inyectable) que no deja invocar más de `rate_limit_rps_per_target` acciones por segundo sobre la misma **IP**. Así el límite no depende solo del flag de cada herramienta, se puede testear sin red y vale para cualquier llamador, no solo para el loop A. *(Cambió en la implementación: primero estaba en el orquestador y contaba por nombre; ver la revisión al final.)*
 
 ### D11. Entrega a correlación
 Respuesta a "¿cuándo se promueve un hallazgo de recon a candidato de correlación?": cuando el loop A para, sea por grafo estabilizado o por tope. En ese momento, cada activo en alcance con al menos una tecnología con versión (por ejemplo `Apache httpd 2.4.25`) se entrega al 005 como entrada de `cve.lookup`. Los activos sin versión quedan en el grafo para el análisis activo del 005 (ZAP y nuclei).
@@ -93,3 +96,24 @@ Respuesta a "¿cuándo se promueve un hallazgo de recon a candidato de correlaci
 - **Virtual hosts con TLS:** con `Host` fijado, httpx sobre HTTPS manda SNI con la IP. Los dos objetivos del laboratorio son HTTP, así que no pasa. Si aparece un objetivo HTTPS se revisa (httpx tiene `-sni`).
 - **Fuentes pasivas de subfinder:** en un engagement real consultan servicios de terceros sobre el dominio del cliente. Es OSINT pasivo y no toca al objetivo, pero el RoE debería decir si está permitido. Queda como campo futuro del RoE (`passive_osint: true/false`). En el laboratorio no hay salida, así que no aplica.
 - **Flags verificados contra la versión instalada:** los perfiles se escriben contra httpx y subfinder reales (`-h`). Si cambia la versión, el test de argv lo detecta solo si cambia el armado, no si la herramienta cambia el significado de un flag.
+
+## Revisión del `security-reviewer` (implementación)
+Corregido, cada uno con su test:
+- **Un host excluido por nombre se alcanzaba por su IP.** El RoE excluía `juiceshop.lab.test`, pero `10.99.0.11` estaba dentro del CIDR autorizado. Ahora el emisor resuelve los nombres excluidos y agrega sus IP a `token.excluded`, que está cubierto por la MAC. Cierra la limitación "exclusiones textuales" que había quedado del 003.
+- **`Location` malformado** (`http://[::1`, puertos inválidos) tiraba una excepción y cortaba el loop. Ahora se descarta.
+- **Un adaptador que lanza después del OK** dejaba la bitácora diciendo que la acción salió bien. `Harness.invoke` ahora la registra como ABORTED con `adapter_error` y devuelve un error tipado. Los motivos con resultado no BLOCKED se limitan a ABORTED y PENDING_HITL.
+- **Nombres que terminan en guion** normalizaban y ninguna herramienta los acepta. Ahora se rechazan.
+- **El tope de iteraciones se reiniciaba** con cada corrida, y una iteración cortada a la mitad se salteaba. El estado del loop se persiste (D8).
+- **Una herramienta escalada a HITL** volvía a usarse después de reiniciar. Queda persistida como deshabilitada.
+- **Rate limit por nombre:** dos nombres de la misma IP tenían cada uno su presupuesto. El límite pasó al Harness y cuenta por IP (D10).
+- **La entrega a correlación** confiaba en el `in_scope` guardado al descubrir. Ahora vuelve a consultar al Guard con el token vigente.
+- **Flags prohibidos con otra forma** (`--fr`, `-script=…`) pasaban el control. Ahora se normalizan, y se agregaron los flags de httpx y subfinder que escriben archivos, cambian resolvers o siguen a otros dominios (D3).
+- **Errores del runner:** un binario sin permiso de ejecución lanzaba `PermissionError` crudo (ahora `exec_error`), y una salida con bytes no UTF-8 rompía la decodificación (ahora se reemplazan).
+- **nmap aceptaba hosts que no escaneó** y httpx no acotaba la lista de tecnologías. Ahora nmap descarta las IP que no le pidieron y httpx guarda hasta 20 tecnologías por servicio.
+- **Runner del laboratorio:** las imágenes quedan fijadas por digest, y el proyecto se monta de solo lectura (solo `demo/out` es escribible). El runner procesa respuestas hostiles y no tiene por qué poder tocar el código del harness.
+- **Demo:** `lab_get` exige que la ruta del PoC empiece con `/`. Con `@otro.host/x` el destino cambiaba.
+
+Limitaciones aceptadas:
+- **El gate `first_active_action` lo controla el orquestador, no el Harness.** `Engagement` vive en memoria y `Harness.invoke` no lo consulta. La barrera dura sigue siendo el token: sin token de fase RECON no pasa ninguna acción. Pasar la máquina de estados a la bitácora queda para el change de engagement-lifecycle.
+- **Unidades del rate limit:** nmap usa `--max-rate` en paquetes por segundo y la política habla de solicitudes por segundo. Son cosas distintas: el Harness limita invocaciones y cada herramienta limita su propio tráfico con su flag.
+- **El runner corre como root.** Con un usuario fijo, `demo/out` (que es del usuario del host) deja de ser escribible en Linux. El montaje de solo lectura impide igual modificar el código.

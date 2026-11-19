@@ -103,7 +103,7 @@ El sistema NO DEBE superar `rate_limit_rps_per_target`, ni en las solicitudes de
 ### Scenario: ráfaga de invocaciones del orquestador
 - GIVEN un límite de 5 por segundo y un reloj de prueba
 - WHEN el orquestador pide 8 invocaciones sobre el mismo host en el mismo segundo
-- THEN 5 pasan en ese segundo y las otras 3 esperan al siguiente
+- THEN 5 pasan en ese segundo y las otras 3 esperan al siguiente (el límite lo aplica `Harness.invoke` por IP, ver authorization)
 
 ## Requirement: Entrega a correlación
 Cuando el loop A termina, el sistema DEBE entregar a correlación los activos en alcance que tengan al menos una tecnología con versión. Los activos fuera de alcance NO DEBEN entregarse.
@@ -117,3 +117,34 @@ Cuando el loop A termina, el sistema DEBE entregar a correlación los activos en
 - GIVEN `203.0.113.7` en el grafo con `in_scope = false` y una tecnología con versión
 - WHEN el loop A termina
 - THEN no se entrega
+
+### Scenario: el alcance cambió desde el descubrimiento
+- GIVEN `www.dvwa.lab.test` guardado en alcance y un token nuevo que lo excluye
+- WHEN se pide la entrega con ese token
+- THEN `www.dvwa.lab.test` no se entrega: la entrega vuelve a consultar al Guard
+
+## Requirement: El estado del loop sobrevive a un reinicio
+El grafo DEBE persistir, además de los activos, el estado del loop: qué iteraciones terminaron, el motivo de parada y las herramientas deshabilitadas por HITL. Al reabrir el engagement, el orquestador DEBE retomar desde ese estado: el tope de iteraciones cuenta entre corridas, un loop terminado no se vuelve a correr y una herramienta escalada sigue deshabilitada.
+
+### Scenario: el tope vale entre corridas
+- GIVEN un tope de 2 iteraciones y un loop que ya lo alcanzó
+- WHEN se vuelve a correr el loop
+- THEN no se ejecuta ninguna iteración nueva y termina con "tope de iteraciones alcanzado"
+
+### Scenario: corte a mitad de una iteración
+- GIVEN un loop que se cortó durante la iteración 2, antes de marcarla terminada
+- WHEN se vuelve a correr
+- THEN repite la iteración 2 sobre la misma frontera y no la saltea
+
+### Scenario: herramienta escalada y reinicio
+- GIVEN httpx deshabilitado por dos salidas inválidas seguidas
+- WHEN se reabre el engagement y se corre el loop
+- THEN httpx no se invoca
+
+## Requirement: Un dato malformado de la herramienta no tumba el loop
+Un `Location` u otro dato de la salida que no se pueda interpretar DEBE descartarse sin cortar el loop.
+
+### Scenario: Location malformado
+- GIVEN una respuesta 302 con `Location: http://[::1` o con un puerto inválido
+- WHEN el orquestador procesa la salida de httpx
+- THEN la redirección se descarta y el loop sigue
