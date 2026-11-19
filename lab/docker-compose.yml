@@ -31,3 +31,8 @@ services:
 networks:
   lab:
     internal: true
+    # Subred fija y contenida en targets.lab_only_cidrs (harness/profiles.yaml).
+    # Si cambia una, cambia la otra: lo verifica tests/test_audit_and_policy.py.
+    ipam:
+      config:
+        - subnet: 10.99.0.0/24

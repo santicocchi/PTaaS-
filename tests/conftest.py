@@ -18,9 +18,9 @@ class FakeAdapter:
 
 
 def make_token(phase=Phase.RECON, cidrs=("10.0.0.0/24",), domains=("lab.example.test",),
-               start=None, end=None):
+               start=None, end=None, engagement_id="eng-1"):
     now = time.time()
-    return ScopeToken("eng-1", cidrs, domains,
+    return ScopeToken(engagement_id, cidrs, domains,
                       now - 5 if start is None else start,
                       now + 600 if end is None else end, phase)
 
