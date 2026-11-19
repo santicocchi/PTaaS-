@@ -16,8 +16,7 @@ http:
     matchers:
       - type: status
         status:
-          - 200
-          - 302
+          - 200          # una redirección no se renderiza: igual que ZAP, no cuenta
       - type: regex
         part: header
         negative: true

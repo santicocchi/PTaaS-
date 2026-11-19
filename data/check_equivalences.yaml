@@ -1,0 +1,8 @@
+# Verificaciones equivalentes entre ZAP (pluginId) y nuclei (template-id) — change 005, D8.
+# Solo entre estas se habla de "contradicción": si una marca una URL y la otra la revisó y no.
+# Que una herramienta no diga nada sobre algo que no revisa NO es contradicción.
+equivalences:
+  - {zap: "10038", nuclei: ptaas-missing-csp}                 # CWE-693
+  - {zap: "10020", nuclei: ptaas-missing-anticlickjacking}    # CWE-1021
+  - {zap: "10010", nuclei: ptaas-cookie-without-httponly}     # CWE-1004
+  - {zap: "10036", nuclei: ptaas-server-version}              # CWE-497
