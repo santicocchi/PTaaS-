@@ -48,8 +48,12 @@ class Scripted:
         return out
 
 
+NO_FINDINGS = (nuclei_out(),)
+NO_ALERTS = (zap_out(),)
+
+
 class Lab:
-    def __init__(self, tmp_path: Path, nuclei=(nuclei_out(),), zap=(zap_out(),), fps=(),
+    def __init__(self, tmp_path: Path, nuclei=NO_FINDINGS, zap=NO_ALERTS, fps=(),
                  max_iterations=4, criticality=lambda h: (3, True), store=None):
         self.log: list[tuple[str, str]] = []
         self.adapters = {"nuclei.safe_templates": Scripted("nuclei.safe_templates", nuclei,
