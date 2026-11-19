@@ -1,0 +1,31 @@
+id: ptaas-cookie-without-httponly
+info:
+  name: Cookie sin HttpOnly
+  author: ptaas
+  severity: info
+  description: "Se setean cookies y ninguna lleva HttpOnly (conservador: si una sí lo lleva, no marca)."
+  tags: headers,misconfig
+  classification:
+    cwe-id: CWE-1004
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    redirects: false
+    matchers-condition: and
+    matchers:
+      - type: regex
+        part: header
+        regex:
+          - "(?im)^set-cookie:"
+      - type: regex
+        part: header
+        negative: true
+        regex:
+          - "(?im)^set-cookie:[^\r\n]*httponly"
+    extractors:
+      - type: regex
+        part: header
+        group: 1
+        regex:
+          - "(?im)^set-cookie: *([^=;\r\n]{1,40})="

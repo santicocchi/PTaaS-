@@ -2,31 +2,337 @@
   {
     "id": "corr-001-sin-cve-no-inventa",
     "agent": "correlation",
-    "input": {"assets": [{"id": "a1", "technologies": ["AppDesconocida 0.1"]}], "feeds": {"cve": [], "epss": []}},
-    "required_keys": ["candidates"],
-    "max_items": {"candidates": 0},
-    "forbidden_substrings": ["CVE-20"],
-    "golden_output": {"candidates": []}
+    "input": {
+      "assets": [
+        {
+          "id": "a1",
+          "technologies": [
+            "AppDesconocida 0.1"
+          ]
+        }
+      ],
+      "feeds": {
+        "cve": [],
+        "epss": []
+      }
+    },
+    "required_keys": [
+      "candidates"
+    ],
+    "max_items": {
+      "candidates": 0
+    },
+    "forbidden_substrings": [
+      "CVE-20"
+    ],
+    "golden_output": {
+      "candidates": []
+    }
   },
   {
     "id": "corr-002-candidato-con-evidencia",
     "agent": "correlation",
-    "input": {"assets": [{"id": "a1", "technologies": ["Apache 2.4.49"]}],
-              "feeds": {"cve": [{"id": "CVE-2021-41773", "product": "Apache 2.4.49", "cwe": "CWE-22"}],
-                        "epss": [{"id": "CVE-2021-41773", "score": 0.94}]}},
-    "required_keys": ["candidates"],
-    "required_substrings": ["CVE-2021-41773", "evidence_refs", "CWE-22"],
-    "golden_output": {"candidates": [{"id": "f1", "asset_id": "a1", "cve": "CVE-2021-41773", "cwe": "CWE-22",
-                                      "epss": 0.94, "evidence_refs": ["feed:nvd", "asset:a1"]}]}
+    "input": {
+      "assets": [
+        {
+          "id": "a1",
+          "technologies": [
+            "Apache 2.4.49"
+          ]
+        }
+      ],
+      "feeds": {
+        "cve": [
+          {
+            "id": "CVE-2021-41773",
+            "product": "Apache 2.4.49",
+            "cwe": "CWE-22"
+          }
+        ],
+        "epss": [
+          {
+            "id": "CVE-2021-41773",
+            "score": 0.94
+          }
+        ]
+      }
+    },
+    "required_keys": [
+      "candidates"
+    ],
+    "required_substrings": [
+      "CVE-2021-41773",
+      "evidence_refs",
+      "CWE-22"
+    ],
+    "golden_output": {
+      "candidates": [
+        {
+          "id": "f1",
+          "asset_id": "a1",
+          "cve": "CVE-2021-41773",
+          "cwe": "CWE-22",
+          "epss": 0.94,
+          "evidence_refs": [
+            "feed:nvd",
+            "asset:a1"
+          ]
+        }
+      ]
+    }
   },
   {
     "id": "corr-003-dato-ausente-es-null",
     "agent": "correlation",
-    "input": {"assets": [{"id": "a2", "technologies": ["nginx 1.25"]}],
-              "feeds": {"cve": [{"id": "CVE-2099-0001", "product": "nginx 1.25", "cwe": null}], "epss": []}},
-    "required_substrings": ["unknown"],
-    "forbidden_substrings": ["\"epss\": 0."],
-    "golden_output": {"candidates": [{"id": "f2", "asset_id": "a2", "cve": "CVE-2099-0001", "cwe": "unknown",
-                                      "epss": null, "evidence_refs": ["feed:nvd"]}]}
+    "input": {
+      "assets": [
+        {
+          "id": "a2",
+          "technologies": [
+            "nginx 1.25"
+          ]
+        }
+      ],
+      "feeds": {
+        "cve": [
+          {
+            "id": "CVE-2099-0001",
+            "product": "nginx 1.25",
+            "cwe": null
+          }
+        ],
+        "epss": []
+      }
+    },
+    "required_substrings": [
+      "unknown"
+    ],
+    "forbidden_substrings": [
+      "\"epss\": 0."
+    ],
+    "golden_output": {
+      "candidates": [
+        {
+          "id": "f2",
+          "asset_id": "a2",
+          "cve": "CVE-2099-0001",
+          "cwe": "unknown",
+          "epss": null,
+          "evidence_refs": [
+            "feed:nvd"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "corr-004-banner-debian-confianza-baja",
+    "agent": "correlation",
+    "input": {
+      "assets": [
+        {
+          "id": "a1",
+          "technologies": [
+            "Apache HTTP Server:2.4.25",
+            "Debian",
+            "Apache httpd:2.4.25"
+          ],
+          "sources": {
+            "Apache HTTP Server:2.4.25": "httpx",
+            "Apache httpd:2.4.25": "nmap"
+          }
+        }
+      ],
+      "feeds": {
+        "cve": [
+          {
+            "id": "CVE-2099-0001",
+            "product": "apache:http_server",
+            "versions": "<2.4.30",
+            "cwe": "CWE-22"
+          }
+        ],
+        "epss": [
+          {
+            "id": "CVE-2099-0001",
+            "score": 0.42
+          }
+        ]
+      }
+    },
+    "required_values": {
+      "candidates.0.confidence": "low"
+    },
+    "required_substrings": [
+      "backport",
+      "CVE-2099-0001"
+    ],
+    "forbidden_substrings": [
+      "confirmed",
+      "\"confidence\": \"high\""
+    ],
+    "golden_output": {
+      "candidates": [
+        {
+          "id": "f1",
+          "asset_id": "a1",
+          "cve": "CVE-2099-0001",
+          "cwe": "CWE-22",
+          "epss": 0.42,
+          "confidence": "low",
+          "evidence_refs": [
+            "feed:nvd:CVE-2099-0001",
+            "tool:httpx",
+            "tool:nmap",
+            "note:banner de distribución, puede haber backport"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "corr-005-feed-desactualizado",
+    "agent": "correlation",
+    "input": {
+      "assets": [
+        {
+          "id": "a1",
+          "technologies": [
+            "Apache httpd:2.4.25"
+          ]
+        }
+      ],
+      "feeds": {
+        "age_days": 45,
+        "max_age_days": 30,
+        "cve": [
+          {
+            "id": "CVE-2099-0001",
+            "product": "apache:http_server",
+            "versions": "<2.4.30",
+            "cwe": "CWE-22"
+          }
+        ],
+        "epss": []
+      }
+    },
+    "required_values": {
+      "candidates.0.feed_stale": true,
+      "candidates.0.confidence": "low"
+    },
+    "golden_output": {
+      "candidates": [
+        {
+          "id": "f1",
+          "asset_id": "a1",
+          "cve": "CVE-2099-0001",
+          "cwe": "CWE-22",
+          "epss": null,
+          "feed_stale": true,
+          "confidence": "low",
+          "evidence_refs": [
+            "feed:nvd:CVE-2099-0001",
+            "note:snapshot desactualizado"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "corr-006-cvss31-no-se-convierte",
+    "agent": "correlation",
+    "input": {
+      "assets": [
+        {
+          "id": "a1",
+          "technologies": [
+            "Apache httpd:2.4.25"
+          ]
+        }
+      ],
+      "feeds": {
+        "cve": [
+          {
+            "id": "CVE-2099-0002",
+            "product": "apache:http_server",
+            "versions": "=2.4.25",
+            "cwe": "NVD-CWE-noinfo",
+            "cvss": {
+              "version": "3.1",
+              "base": 5.3
+            }
+          }
+        ],
+        "epss": []
+      }
+    },
+    "required_values": {
+      "candidates.0.cvss_version": "3.1",
+      "candidates.0.cwe": "unknown"
+    },
+    "forbidden_substrings": [
+      "\"cvss_version\": \"4.0\"",
+      "\"epss\": 0"
+    ],
+    "golden_output": {
+      "candidates": [
+        {
+          "id": "f2",
+          "asset_id": "a1",
+          "cve": "CVE-2099-0002",
+          "cwe": "unknown",
+          "epss": null,
+          "cvss_score": 5.3,
+          "cvss_version": "3.1",
+          "confidence": "low",
+          "evidence_refs": [
+            "feed:nvd:CVE-2099-0002"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "id": "corr-007-producto-fuera-de-la-tabla",
+    "agent": "correlation",
+    "input": {
+      "assets": [
+        {
+          "id": "a1",
+          "technologies": [
+            "Apache Tomcat:2.4.25"
+          ]
+        }
+      ],
+      "aliases": {
+        "apache:http_server": [
+          "Apache httpd",
+          "Apache HTTP Server"
+        ]
+      },
+      "feeds": {
+        "cve": [
+          {
+            "id": "CVE-2099-0001",
+            "product": "apache:http_server",
+            "versions": "<2.4.30",
+            "cwe": "CWE-22"
+          }
+        ],
+        "epss": []
+      }
+    },
+    "required_keys": [
+      "candidates"
+    ],
+    "max_items": {
+      "candidates": 0
+    },
+    "forbidden_substrings": [
+      "CVE-2099"
+    ],
+    "golden_output": {
+      "candidates": []
+    }
   }
 ]

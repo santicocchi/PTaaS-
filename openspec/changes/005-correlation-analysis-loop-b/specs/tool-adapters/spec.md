@@ -21,7 +21,7 @@ Tests: tests/tool_adapters/test_nuclei.py, tests/tool_adapters/test_zap.py, test
 - THEN se descarta y cuenta como inválida
 
 ## ADDED Requirement: Solo templates registrados e intactos
-El adaptador DEBE pasar a nuclei solo los templates del manifiesto cuyo SHA-256 coincide, uno por uno. Un template de la carpeta que no está en el manifiesto, o cuyo hash no coincide, NO DEBE ejecutarse. Cada template registrado DEBE usar solo protocolo `http`, métodos GET o HEAD y redirecciones apagadas, sin `payloads`, `fuzzing`, `code`, `headless`, `dns` ni OAST, y sin tags de `exclude_tags`.
+El adaptador DEBE pasar a nuclei solo los templates del manifiesto cuyo SHA-256 coincide, uno por uno. Un template de la carpeta que no está en el manifiesto, o cuyo hash no coincide, NO DEBE ejecutarse. Cada template registrado DEBE usar solo protocolo `http`, métodos GET o HEAD y redirecciones apagadas, sin `payloads`, `fuzzing`, `code`, `headless`, `dns` ni OAST, sin tags de `exclude_tags` (escritas como texto o como lista) y sin un encabezado `Host` propio.
 
 ### Scenario: template sin registrar
 - GIVEN un archivo nuevo en `templates/allowlist/` que no está en `MANIFEST.md`
@@ -38,15 +38,32 @@ El adaptador DEBE pasar a nuclei solo los templates del manifiesto cuyo SHA-256 
 - WHEN corre el test de la allow-list
 - THEN falla
 
+### Scenario: template que fija su propio Host
+- GIVEN un template con `headers: {Host: 203.0.113.7}`
+- WHEN corre el control estático
+- THEN no pasa y no se ejecuta
+
 ## ADDED Requirement: ZAP por API, en modo protegido y sin escaneo activo
 `zap.baseline_scan` DEBE hablar con el servicio ZAP del laboratorio usando solo un conjunto fijo de endpoints, que NO DEBE incluir ningún endpoint de escaneo activo. Por cada invocación DEBE:
 - usar el modo `protect`;
 - limitar el contexto a `http://<ip>(:<puerto>)?/`;
 - fijar `Host: <nombre>`;
 - aplicar el rate limit de `policy.yaml`;
-- limitar el spider en hilos, profundidad y duración.
+- limitar el spider en hilos, profundidad y duración;
+- NO enviar formularios (`processForm` y `postForm` apagados antes de arrancar el spider);
+- empezar y terminar con una sesión nueva de ZAP, para no atribuir alertas de otra corrida y no retener datos del objetivo.
 
-La clave de la API DEBE leerse del entorno y NO DEBE tener valor por defecto.
+La clave de la API DEBE leerse del entorno, NO DEBE tener valor por defecto y DEBE viajar en el encabezado `X-ZAP-API-Key`, nunca en la URL.
+
+### Scenario: spider sin formularios
+- GIVEN una invocación de `zap.baseline_scan`
+- WHEN se arma la secuencia de llamadas
+- THEN `setOptionProcessForm` y `setOptionPostForm` con `false` van antes de `spider/action/scan`, y en el laboratorio el objetivo recibe solo GET de ZAP
+
+### Scenario: alertas de una corrida anterior
+- GIVEN un ZAP que ya analizó la misma IP para otro engagement
+- WHEN se invoca `zap.baseline_scan`
+- THEN la primera llamada abre una sesión nueva y la última la vuelve a abrir
 
 ### Scenario: endpoints permitidos
 - GIVEN el conjunto de endpoints del adaptador

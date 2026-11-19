@@ -28,6 +28,7 @@ mvp:
     mode: data_only
     destructive: false
     output: json
+    notes: snapshot local de data/feeds con manifiesto SHA-256; sin conexiones (tools/build_feeds.py lo genera)
   - capability: epss.lookup
     tool: epss_feed
     phase: correlate
@@ -46,6 +47,7 @@ mvp:
     mode: passive_baseline
     destructive: false
     output: json
+    notes: servicio del laboratorio, por API con endpoints fijos; modo protect, spider acotado y escaneo pasivo, sin /ascan/
   - capability: nuclei.safe_templates
     tool: nuclei
     phase: analyze

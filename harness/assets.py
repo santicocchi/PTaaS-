@@ -139,6 +139,12 @@ class AssetGraph:
                        in_scope=bool(r[5]), reason=r[6]) for r in rows]
         return [a for a in found if in_scope is None or a.in_scope is in_scope]
 
+    def tech_sources(self, asset_id_: str) -> list[tuple[str, str]]:
+        """(tecnología, herramienta que la reportó) de un activo, en orden de llegada."""
+        return [(str(t), str(src)) for t, src in self._con.execute(
+            "SELECT tech, source_tool FROM asset_tech WHERE asset_id = ? ORDER BY rowid",
+            (asset_id_,))]
+
     def new_in(self, iteration: int) -> list[Asset]:
         return [a for a in self.assets() if a.iteration == iteration]
 

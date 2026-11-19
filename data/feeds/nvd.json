@@ -1,0 +1,127 @@
+{
+ "format": "NVD_CVE",
+ "version": "2.0",
+ "synthetic": true,
+ "vulnerabilities": [
+  {
+   "cve": {
+    "id": "CVE-2099-0001",
+    "metrics": {
+     "cvssMetricV40": [
+      {
+       "type": "Primary",
+       "cvssData": {
+        "baseScore": 8.7
+       }
+      }
+     ]
+    },
+    "weaknesses": [
+     {
+      "description": [
+       {
+        "lang": "en",
+        "value": "CWE-22"
+       }
+      ]
+     }
+    ],
+    "configurations": [
+     {
+      "nodes": [
+       {
+        "cpeMatch": [
+         {
+          "vulnerable": true,
+          "criteria": "cpe:2.3:a:apache:http_server:*:*:*:*:*:*:*:*",
+          "versionStartIncluding": "2.4.0",
+          "versionEndExcluding": "2.4.30"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "cve": {
+    "id": "CVE-2099-0002",
+    "metrics": {
+     "cvssMetricV31": [
+      {
+       "type": "Primary",
+       "cvssData": {
+        "baseScore": 5.3
+       }
+      }
+     ]
+    },
+    "weaknesses": [
+     {
+      "description": [
+       {
+        "lang": "en",
+        "value": "NVD-CWE-noinfo"
+       }
+      ]
+     }
+    ],
+    "configurations": [
+     {
+      "nodes": [
+       {
+        "cpeMatch": [
+         {
+          "vulnerable": true,
+          "criteria": "cpe:2.3:a:apache:http_server:2.4.25:*:*:*:*:*:*:*"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "cve": {
+    "id": "CVE-2099-0003",
+    "metrics": {
+     "cvssMetricV31": [
+      {
+       "type": "Primary",
+       "cvssData": {
+        "baseScore": 5.3
+       }
+      }
+     ]
+    },
+    "weaknesses": [
+     {
+      "description": [
+       {
+        "lang": "en",
+        "value": "CWE-79"
+       }
+      ]
+     }
+    ],
+    "configurations": [
+     {
+      "nodes": [
+       {
+        "cpeMatch": [
+         {
+          "vulnerable": true,
+          "criteria": "cpe:2.3:a:apache:http_server:*:*:*:*:*:*:*:*",
+          "versionEndExcluding": "2.4.20"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

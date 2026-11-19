@@ -1,0 +1,11 @@
+# Tabla curada: nombre de tecnología (como lo reportan nmap/httpx) → vendor:product de CPE.
+# Un nombre que no está acá NO se busca en NVD (change 005, D3): sin coincidencias aproximadas.
+# Agregar un alias = PR revisado + `python tools/build_feeds.py --manifest-only`.
+aliases:
+  apache:http_server:
+    - Apache httpd            # nmap
+    - Apache HTTP Server      # httpx (wappalyzer)
+  php:php:
+    - PHP
+  nginx:nginx:
+    - nginx

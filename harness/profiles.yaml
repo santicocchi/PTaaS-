@@ -22,15 +22,67 @@ nmap:
 
 nuclei:
   binary: nuclei
-  # Directorio de templates CURADO y revisado: el control principal.
+  # Directorio de templates CURADO: solo corren los del MANIFEST.md con revisor y hash que
+  # coincide, pasados uno por uno con -t (change 005, D9). Verificado con nuclei v3.11.1.
   templates_dir: "templates/allowlist"
   include_tags: ["tech", "exposure", "misconfig", "headers", "panel"]
   exclude_tags: ["intrusive", "dos", "fuzz", "bruteforce", "rce", "sqli", "xss", "oast", "cve", "kev"]
-  # Flags de seguridad: sin OAST/Interactsh (sin tráfico a terceros), sin auto-actualización.
-  fixed_args: ["-jsonl", "-silent", "-ni", "-duc", "-disable-update-check"]
-  rate_limit_rps: 5
+  # Sin redirecciones, solo HTTP, sin sondeo httpx interno, sin OAST/Interactsh (sin tráfico a
+  # terceros), sin auto-actualización, salida JSONL sin el template ni la respuesta cruda.
+  # El rate limit (-rl) sale de policy.yaml (limits.rate_limit_rps_per_target).
+  fixed_args: ["-dr", "-pt", "http", "-nh", "-ni", "-duc", "-jsonl", "-silent", "-nc", "-ot",
+               "-or", "-timeout", "10", "-retries", "0"]
+  forbidden_args:        # redirecciones, protocolos y modos peligrosos, entrada/config externa
+    - "-fr"
+    - "-follow-redirects"
+    - "-fhr"
+    - "-follow-host-redirects"
+    - "-mr"
+    - "-max-redirects"
+    - "-code"
+    - "-esc"
+    - "-enable-self-contained"
+    - "-lfa"
+    - "-allow-local-file-access"
+    - "-headless"
+    - "-dast"
+    - "-as"
+    - "-automatic-scan"
+    - "-nt"
+    - "-new-templates"
+    - "-ntv"
+    - "-ut"
+    - "-update-templates"
+    - "-up"
+    - "-update"
+    - "-ud"
+    - "-p"
+    - "-proxy"
+    - "-config"
+    - "-tp"
+    - "-profile"
+    - "-it"
+    - "-include-templates"
+    - "-o"
+    - "-output"
+    - "-r"
+    - "-resolvers"
+    - "-sr"
+    - "-l"
+    - "-list"
+    - "-w"
+    - "-workflows"
   timeout_s: 600
   output: jsonl
+
+zap:
+  # ZAP 2.17.0 como servicio del laboratorio (lab/docker-compose.yml), hablado por su API con un
+  # conjunto fijo de endpoints sin escaneo activo (change 005, D7). La clave sale del entorno.
+  api_url: "http://10.97.0.20:8080"
+  api_key_env: PTAAS_ZAP_API_KEY
+  spider: {threads: 1, max_depth: 3, max_duration_min: 1, max_children: 20}
+  max_wait_s: 300
+  poll_s: 2
 
 targets:
   # En desarrollo solo se permiten estos hosts de laboratorio (red aislada).

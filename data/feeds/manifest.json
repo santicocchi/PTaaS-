@@ -1,0 +1,23 @@
+{
+  "synthetic": true,
+  "files": {
+    "nvd.json": {
+      "source": "synthetic",
+      "retrieved_at": "2026-11-19T18:53:19+00:00",
+      "records": 3,
+      "sha256": "259da860ae642b4e27ddba7c96ced04415718d214e0531f580deb41763f45323"
+    },
+    "epss.csv": {
+      "source": "synthetic",
+      "retrieved_at": "2026-11-19T18:53:19+00:00",
+      "records": 1,
+      "sha256": "667d0fa151e4a9a88d2574cf914a6629d09497b9e848101be723ea0c3b9dfdc9"
+    },
+    "cpe_aliases.yaml": {
+      "source": "local",
+      "retrieved_at": "2026-11-19T18:53:19+00:00",
+      "records": null,
+      "sha256": "d30a41ccd3edb35fa6e98d59fbdd73b37aa69b42d0f833a809772730adf28300"
+    }
+  }
+}

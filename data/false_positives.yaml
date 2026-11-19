@@ -1,0 +1,14 @@
+# Falsos positivos conocidos del laboratorio (change 005, D10). Mismo procedimiento que un
+# template: PR revisado por alguien distinto del autor. Una entrada con revisor `pendiente` no
+# se aplica. Una entrada NUNCA descarta un candidato con CVE ni una alerta de riesgo alto.
+#
+# Ejemplo de entrada:
+#   - id: FP-001
+#     tool: zap                     # zap | nuclei
+#     check: "10027"                # pluginId de ZAP o template-id de nuclei
+#     url_pattern: '^http://dvwa\.lab\.test:80/setup\.php$'
+#     reason: "comentario de instalación de DVWA, no expone nada"
+#     author: Nombre
+#     reviewer: Otro nombre
+#     date: 2026-11-19
+entries: []

@@ -68,6 +68,14 @@ Un candidato con evidencia solo de versión NO DEBE tener confianza `high`.
 - WHEN se correlaciona
 - THEN el candidato tiene confianza `medium`
 
+## ADDED Requirement: Correlación solo con el engagement en CORRELATE
+El correlador DEBE recibir el engagement y NO DEBE invocar ninguna capability si su estado no es `CORRELATE`.
+
+### Scenario: engagement todavía en RECON
+- GIVEN un token CORRELATE vigente y un engagement en `RECON`
+- WHEN se arranca la correlación
+- THEN no se consulta ningún feed y no se generan candidatos
+
 ## MODIFIED Requirement: Sin datos inventados
 El sistema NO DEBE completar CVE, EPSS, CWE, CVSS ni técnicas ATT&CK inexistentes; los datos ausentes DEBEN marcarse como `unknown`/`null`. Un puntaje CVSS DEBE guardarse con su versión y NO DEBE convertirse de una versión a otra.
 

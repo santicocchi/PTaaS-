@@ -14,7 +14,10 @@ def score(case: dict, output: dict) -> list[str]:
     for path, expected in case.get("required_values", {}).items():
         cur = output
         for part in path.split("."):
-            cur = cur.get(part) if isinstance(cur, dict) else None
+            if isinstance(cur, list) and part.isdigit():          # "candidates.0.confidence"
+                cur = cur[int(part)] if int(part) < len(cur) else None
+            else:
+                cur = cur.get(part) if isinstance(cur, dict) else None
         if cur != expected:
             fails.append(f"{path}: esperado {expected!r}, obtenido {cur!r}")
     for s in case.get("forbidden_substrings", []):
