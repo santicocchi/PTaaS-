@@ -25,7 +25,7 @@ CREATE TABLE audit (
   hash       TEXT    NOT NULL UNIQUE
 );
 ```
-`hash = SHA-256(JSON canónico de todos los campos salvo hash)`. Es el mismo cálculo que hoy, así que los registros en memoria y en disco se verifican con una única función.
+`hash = SHA-256(JSON canónico de todos los campos salvo hash y seq)`. `seq` no entra en el hash, así que si alguien borra una fila y renumera, el que lo detecta es `prev` (hay un test que lo prueba). Es el mismo cálculo que hoy, así que los registros en memoria y en disco se verifican con una única función.
 
 ### D3. Append-only: triggers **y** capa de acceso (respuesta a "¿triggers o convención?")
 - Triggers `BEFORE UPDATE` y `BEFORE DELETE` que hacen `RAISE(ABORT, 'append-only')`.
@@ -38,7 +38,7 @@ El `prev` del primer registro es `GENESIS:<engagement_id>`, no el literal `GENES
 
 ### D5. Verificación al abrir, antes de actuar y por CLI
 - `SqliteAuditLog.open()` verifica toda la cadena. Si falla, lanza `AuditIntegrityError`.
-- `Harness.invoke` verifica la cadena antes de ejecutar una acción activa (Requirement del 008). Para no recorrer toda la tabla en cada acción, guarda en memoria el último `(seq, hash)` verificado y comprueba que la tabla siga terminando ahí y que solo haya crecido desde ese punto. La verificación completa se hace al abrir y por CLI.
+- `Harness.invoke` verifica la cadena **completa** antes de cada acción. *Cambio respecto del borrador:* la idea era verificar solo la cola (último `seq`/hash), pero eso no detecta una fila intermedia alterada, que es justo lo que pide el Scenario "manipulación durante el engagement". Para los volúmenes del MVP (cientos de registros), el costo es despreciable. Si hiciera falta optimizar, la opción sería guardar un hash acumulado por bloque.
 - `python -m harness.audit verify <archivo>`: sale con código 0 si la cadena está íntegra y 1 si no, indicando el `seq` del primer registro roto.
 - Con la cadena rota, el engagement no continúa: se registra ABORTED (en memoria) y se lanza `AuditIntegrityError`.
 
@@ -62,3 +62,17 @@ Al abrir la bitácora, si existe un registro `ABORTED` con `action = "killswitch
 
 ## Riesgos
 - Alguien que reescribe **toda** la cadena desde el principio con hashes válidos no es detectado por la cadena sola. Mitigación propuesta: publicar el hash del último registro en cada informe y cada checkpoint (anclaje externo). Se anota como trabajo futuro.
+
+## Revisión del `security-reviewer` (implementación)
+Corregido, cada uno con su test:
+- **Write-ahead:** el OK se registra *antes* de `adapter.run`. Si no se puede registrar (token de otro engagement, base bloqueada, disco lleno), la herramienta no corre.
+- **La cadena rota deja rastro:** se activa el kill switch y se intenta escribir un `killswitch.engage`/ABORTED.
+- **Ancla en memoria `(cantidad, último hash)`:** detecta un truncado del final o un archivo reemplazado mientras el proceso corre.
+- **Kill switch:** solo cuenta si `phase = 'control'` y el resultado es `ABORTED`. Una acción de un agente que se llame igual no aborta el engagement.
+- **Triggers:** al abrir se comprueba que sean los nuestros, porque `IF NOT EXISTS` no reemplaza un trigger plantado de antemano.
+
+Limitaciones aceptadas:
+- **Truncado del final entre reinicios:** sin un ancla externa no se detecta. Si alguien borra la fila del kill switch *con el proceso apagado*, al reabrir no se nota. Mitigación futura: publicar el último hash en cada checkpoint o informe, o firmar con una clave fuera del host (desafío C3).
+- **Bitácora en memoria:** no aísla engagements. Solo se usa en tests.
+- **Ventana entre verificar y escribir:** queda abierta dentro de un mismo `invoke`. El ancla la acota a cambios hechos por fuera del proceso.
+- **`close()`:** solo cierra la conexión del hilo que lo llama.

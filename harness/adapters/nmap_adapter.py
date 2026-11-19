@@ -1,8 +1,13 @@
 """Adaptador nmap.service_scan: detección de servicios acotada y sin scripts."""
 from __future__ import annotations
 
-from harness.adapters.common import (Runner, default_runner, load_profiles,
-                                     reject_forbidden, validate_target)
+from harness.adapters.common import (
+    Runner,
+    default_runner,
+    load_profiles,
+    reject_forbidden,
+    validate_target,
+)
 from harness.contracts import Action, Phase, ScopeToken
 
 

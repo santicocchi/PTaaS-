@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import re
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 import yaml
 
@@ -99,7 +99,7 @@ def cookie_flags_missing(r: ResponseRecord) -> tuple[bool, str]:
 
 
 def directory_listing_enabled(r: ResponseRecord) -> tuple[bool, str]:
-    hit = r.status == 200 and re.search(r"<title>\s*index of /", r.body, re.I) is not None
+    hit = r.status == 200 and re.search(r"<title>\s*index of /", r.body, re.IGNORECASE) is not None
     return (hit, "listado de directorio visible" if hit else "sin listado")
 
 
@@ -114,7 +114,7 @@ def input_reflected_unencoded(r: ResponseRecord) -> tuple[bool, str]:
 def verbose_error_disclosure(r: ResponseRecord) -> tuple[bool, str]:
     sigs = [r"stack trace", r"traceback \(most recent call", r"at [\w.$]+\(.+\.(java|js|py|php):\d+",
             r"fatal error:.*on line \d+", r"sqlstate\[", r"you have an error in your sql syntax"]
-    found = [s for s in sigs if re.search(s, r.body, re.I)]
+    found = [s for s in sigs if re.search(s, r.body, re.IGNORECASE)]
     return (bool(found), f"firmas de error: {len(found)}" if found else "sin divulgación")
 
 
