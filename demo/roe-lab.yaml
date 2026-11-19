@@ -1,0 +1,25 @@
+# RoE de la demo del Checkpoint 1 (solo laboratorio propio, red aislada 10.99.0.0/24).
+#
+# `engagement_id`, `window` y `approval.roe_sha256` los completa demo/checkpoint1.py al
+# arrancar: la ventana tiene que contener "ahora" y cada corrida usa un engagement nuevo
+# (así la bitácora y el kill switch de una corrida no se mezclan con los de otra).
+# En un engagement real el reviewer fija la ventana y calcula el hash con:
+#
+#   python -m harness.roe hash <roe.yaml>
+engagement_id: se-completa-al-correr
+scope:
+  cidrs: ["10.99.0.0/24"]
+  domains: ["dvwa.lab.test", "juiceshop.lab.test"]
+exclusions:
+  # El cliente pidió no tocar Juice Shop en esta ventana: la exclusión prevalece sobre el alcance.
+  hosts: ["juiceshop.lab.test"]
+window:
+  start: se-completa-al-correr
+  end: se-completa-al-correr
+phases: [recon, validate]
+emergency_contacts:
+  - name: Responsable del laboratorio
+    channel: "lab-ptaas (canal interno del equipo)"
+approval:
+  approver: reviewer@lab
+  roe_sha256: se-completa-al-correr
