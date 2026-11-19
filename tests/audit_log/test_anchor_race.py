@@ -25,6 +25,7 @@ def test_escritura_entre_lectura_y_ancla_no_es_truncado(tmp_path, monkeypatch):
 
     monkeypatch.setattr(SqliteAuditLog, "entries", property(stale_then_append))
     log.verify_integrity()                  # no debe lanzar
+    assert log._anchor[0] == 2              # y el ancla no retrocede a la lectura vieja (1)
     monkeypatch.undo()
     log.verify_integrity()
     assert len(log.entries) == 2

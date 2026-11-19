@@ -224,3 +224,36 @@ def test_cada_invocacion_queda_en_bitacora_con_su_token(tmp_path):
 def test_tope_invalido(tmp_path, bad):
     with pytest.raises(ValueError):
         Lab(tmp_path, max_iterations=bad)
+
+
+def test_descubrimientos_fuera_de_alcance_no_cuentan_como_nuevos(tmp_path):
+    lab = Lab(tmp_path,
+              subfinder=lambda t: {"tool": "subfinder", "status": "ok", "invalid_lines": 0,
+                                   "hosts": ["otro.ejemplo.org"]},
+              httpx=lambda t: {"tool": "httpx", "status": "ok", "invalid_lines": 0,
+                               "services": []},
+              nmap=lambda t: {"tool": "nmap", "status": "ok", "invalid_lines": 0,
+                              "services": []})
+    result = lab.loop.run()
+    assert result.reason == "grafo estabilizado" and result.iterations == 1
+
+
+def test_el_orquestador_pasa_por_el_limitador_antes_de_cada_invocacion(tmp_path):
+    class Spy:
+        def __init__(self):
+            self.targets = []
+
+        def acquire(self, target):
+            self.targets.append(target)
+
+    lab = Lab(tmp_path)
+    lab.loop.limiter = Spy()
+    lab.loop.run()
+    assert lab.loop.limiter.targets == [t for _, t in lab.log]
+
+
+def test_servicio_fuera_de_alcance_no_recibe_tecnologias(tmp_path):
+    lab = Lab(tmp_path)
+    lab.loop._http_service({"url": "http://203.0.113.7:80", "tech": ["nginx:1.2.3"]}, 1)
+    (svc,) = lab.graph.assets()
+    assert svc.in_scope is False and svc.technologies == ()

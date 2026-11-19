@@ -81,9 +81,10 @@ def test_campos_de_tipo_raro_invalidan_la_linea():
         '{"url":"http://10.99.0.3","port":"99999","status_code":200}',
         '{"url":"http://10.99.0.3","port":"80","status_code":200,"tech":"Apache"}',
         '{"url":"http://203.0.113.7","port":"80","status_code":200}',   # IP que no se pidió
+        '{"url":"http://10.99.0.3","port":"80","status_code":true}',    # bool no es int
     ]
     out = parse_output("dvwa.lab.test", "\n".join(lines), ("10.99.0.3",))
-    assert out["status"] == "invalid_output" and out["invalid_lines"] == 4
+    assert out["status"] == "invalid_output" and out["invalid_lines"] == 5
 
 
 def test_titulo_con_caracteres_de_control_se_limpia():
