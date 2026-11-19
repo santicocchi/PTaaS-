@@ -10,10 +10,12 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Protocol
+from typing import Any, Protocol
 
 
 class Phase(str, Enum):
@@ -33,6 +35,7 @@ class Result(str, Enum):
 
 class ScopeViolation(Exception): ...
 class KillSwitchEngaged(Exception): ...
+class AuditIntegrityError(Exception): ...
 
 
 @dataclass(frozen=True)
@@ -144,27 +147,96 @@ class Guard:
             )
 
 
+Entry = dict[str, Any]
+EVIDENCE_RE = re.compile(r"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*#sha256=[0-9a-f]{64}$")
+KILLSWITCH_ACTION = "killswitch.engage"
+
+
+def entry_hash(entry: Entry) -> str:
+    body = {k: v for k, v in entry.items() if k != "hash"}
+    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+
+def make_entry(*, prev: str, engagement: str, agent: str, action: str, target: str,
+               phase: str, result: Result, reason: str | None = None,
+               evidence: str | None = None) -> Entry:
+    """Arma un registro con su hash. Valida motivo de bloqueo y forma de la evidencia."""
+    body: Entry = {
+        "ts": time.time(), "engagement": engagement, "agent": agent,
+        "action": action, "target": target, "phase": phase,
+        "result": result.value, "prev": prev,
+    }
+    if result is Result.BLOCKED:
+        if reason not in BLOCK_REASONS:
+            raise ValueError(f"motivo de bloqueo inválido: {reason!r}")
+        body["reason"] = reason
+    if evidence is not None:
+        if not EVIDENCE_RE.match(evidence) or ".." in evidence.split("/"):
+            raise ValueError("la evidencia debe ser una referencia '<ruta>#sha256=<hex>'")
+        body["evidence"] = evidence
+    body["hash"] = entry_hash(body)
+    return body
+
+
+def verify_chain(entries: Iterable[Entry], genesis: str,
+                 engagement: str | None = None) -> str | None:
+    """None si la cadena es íntegra; si no, la descripción del primer registro roto."""
+    prev = genesis
+    for i, e in enumerate(entries, start=1):
+        where = f"seq={e.get('seq', i)}"
+        if engagement is not None and e.get("engagement") != engagement:
+            return f"{where}: registro de otro engagement ({e.get('engagement')!r})"
+        if e.get("prev") != prev:
+            return f"{where}: el hash previo no coincide"
+        if entry_hash({k: v for k, v in e.items() if k != "seq"}) != e.get("hash"):
+            return f"{where}: el contenido no coincide con su hash"
+        prev = e["hash"]
+    return None
+
+
 @dataclass
 class AuditLog:
-    """Append-only con hash encadenado (detecta manipulación)."""
+    """Append-only con hash encadenado (detecta manipulación). Versión en memoria."""
 
-    entries: list[dict] = field(default_factory=list)
+    entries: list[Entry] = field(default_factory=list)
+    genesis: str = "GENESIS"
 
-    def record(self, agent: str, action: Action, target: str,
-               token: ScopeToken, result: Result, reason: str | None = None) -> dict:
-        prev = self.entries[-1]["hash"] if self.entries else "GENESIS"
-        body = {
-            "ts": time.time(), "engagement": token.engagement_id, "agent": agent,
-            "action": action.name, "target": target, "phase": token.phase.value,
-            "result": result.value, "prev": prev,
-        }
-        if result is Result.BLOCKED:
-            if reason not in BLOCK_REASONS:
-                raise ValueError(f"motivo de bloqueo inválido: {reason!r}")
-            body["reason"] = reason
-        body["hash"] = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
-        self.entries.append(body)
-        return body
+    def _append(self, **fields: object) -> Entry:
+        prev = self.entries[-1]["hash"] if self.entries else self.genesis
+        entry = make_entry(prev=prev, **fields)  # type: ignore[arg-type]
+        self.entries.append(entry)
+        return entry
+
+    def record(self, agent: str, action: Action, target: str, token: ScopeToken,
+               result: Result, reason: str | None = None,
+               evidence: str | None = None) -> Entry:
+        return self._append(engagement=token.engagement_id, agent=agent, action=action.name,
+                            target=target, phase=token.phase.value, result=result,
+                            reason=reason, evidence=evidence)
+
+    def record_kill(self, engagement_id: str, agent: str) -> Entry:
+        return self._append(engagement=engagement_id, agent=agent, action=KILLSWITCH_ACTION,
+                            target=engagement_id, phase="control", result=Result.ABORTED)
+
+    def killed_engagements(self) -> set[str]:
+        return {e["engagement"] for e in self.entries
+                if e["action"] == KILLSWITCH_ACTION and e["phase"] == "control"}
+
+    def verify_integrity(self) -> None:
+        error = verify_chain(self.entries, self.genesis)
+        if error:
+            raise AuditIntegrityError(error)
+
+
+class AuditSink(Protocol):
+    """Lo que el Harness necesita de una bitácora (en memoria o persistente)."""
+
+    def record(self, agent: str, action: Action, target: str, token: ScopeToken,
+               result: Result, reason: str | None = None,
+               evidence: str | None = None) -> Entry: ...
+    def record_kill(self, engagement_id: str, agent: str) -> Entry: ...
+    def killed_engagements(self) -> set[str]: ...
+    def verify_integrity(self) -> None: ...
 
 
 class KillSwitch:
@@ -194,11 +266,27 @@ class KillSwitch:
 
 
 class Harness:
-    def __init__(self, guard: Guard, audit: AuditLog,
+    def __init__(self, guard: Guard, audit: AuditSink,
                  tools: dict[str, ToolAdapter], killswitch: KillSwitch):
         self.guard, self.audit, self.tools, self.killswitch = guard, audit, tools, killswitch
+        for engagement_id in audit.killed_engagements():   # kill switch persistente
+            killswitch.engage(engagement_id)
+
+    def kill(self, engagement_id: str, agent: str) -> None:
+        """Activa el kill switch: primero queda en bitácora, después en memoria."""
+        self.audit.record_kill(engagement_id, agent)
+        self.killswitch.engage(engagement_id)
 
     def invoke(self, agent: str, action: Action, target: str, token: ScopeToken) -> dict:
+        try:
+            self.audit.verify_integrity()       # con la cadena rota no se actúa
+        except AuditIntegrityError:
+            self.killswitch.engage(token.engagement_id)
+            try:                                # dejar rastro, aunque la cadena ya esté rota
+                self.audit.record_kill(token.engagement_id, agent="harness")
+            except Exception:  # noqa: BLE001, S110 - lo importante es no ejecutar
+                pass
+            raise
         if self.killswitch.is_engaged(token.engagement_id):
             self.audit.record(agent, action, target, token, Result.ABORTED)
             raise KillSwitchEngaged()
@@ -218,6 +306,7 @@ class Harness:
         if token.phase not in adapter.allowed_phases:
             self.audit.record(agent, action, canon, token, Result.BLOCKED, "adapter_phase")
             raise ScopeViolation(f"adaptador {adapter.name} no habilitado en {token.phase}")
-        out = adapter.run(action, canon, token)
+        # Write-ahead: la decisión OK queda en bitácora ANTES de ejecutar. Si no se puede
+        # registrar (otro engagement, base bloqueada, disco lleno), la herramienta no corre.
         self.audit.record(agent, action, canon, token, Result.OK)
-        return out
+        return adapter.run(action, canon, token)
