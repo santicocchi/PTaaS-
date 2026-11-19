@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sV -T3 --open --top-ports 100 --max-rate 100 -oX - 10.99.0.3" version="7.95">
+<host><status state="up" reason="arp-response"/>
+<address addr="10.99.0.3" addrtype="ipv4"/>
+<ports>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack"/><service name="http" product="Apache httpd" version="2.4.25" extrainfo="(Debian)" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="3306"><state state="open" reason="syn-ack"/><service name="mysql" method="table" conf="3"/></port>
+<port protocol="tcp" portid="22"><state state="closed" reason="reset"/><service name="ssh" product="OpenSSH" version="7.4"/></port>
+</ports>
+</host>
+</nmaprun>
