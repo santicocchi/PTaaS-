@@ -1,0 +1,21 @@
+id: ptaas-dvwa-login-panel
+info:
+  name: Panel de login de DVWA expuesto
+  author: ptaas
+  severity: info
+  description: La página de login de DVWA responde (objetivo del laboratorio).
+  tags: panel
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/login.php"
+    redirects: false
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "<title>Login :: Damn Vulnerable Web Application"

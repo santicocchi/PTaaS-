@@ -37,8 +37,10 @@ def test_perfil_nmap_con_argumento_prohibido_falla():
 
 
 def test_nuclei_usa_templates_curados_y_excluye_intrusivos():
-    argv = nuclei_argv("http://dvwa.lab.test/")
-    assert "templates/allowlist" in argv
+    from harness.templates import ALLOWLIST
+    argv = nuclei_argv("dvwa.lab.test", ("10.99.0.2",), [ALLOWLIST / "ptaas-missing-csp.yaml"],
+                       rps=5)
+    assert str(ALLOWLIST / "ptaas-missing-csp.yaml") in argv
     etags = argv[argv.index("-etags") + 1].split(",")
     assert {"intrusive", "dos", "fuzz", "bruteforce"} <= set(etags)
     assert "-ni" in argv                         # sin OAST hacia terceros
@@ -50,14 +52,15 @@ def test_nuclei_rechaza_url_con_credenciales_o_esquema_raro():
             validate_url(u)
 
 
-def test_adaptadores_ejecutan_sin_shell_via_runner_inyectado():
+def test_adaptadores_ejecutan_sin_shell_via_runner_inyectado(tmp_path):
+    from tests.tool_adapters.allowlist_helpers import approved_allowlist
     vistos = []
     def runner(argv, timeout):
         vistos.append((argv, timeout)); return '{"template-id":"x"}\n'
-    out = NucleiSafeTemplates(runner).run(act("nuclei.safe_templates", Phase.ANALYZE),
-                                          "http://dvwa.lab.test/", make_token(Phase.ANALYZE),
-                                          ("10.0.0.50",))
-    assert out["lines"] == ['{"template-id":"x"}'] and isinstance(vistos[0][0], list)
+    out = NucleiSafeTemplates(runner, templates_dir=approved_allowlist(tmp_path)).run(
+        act("nuclei.safe_templates", Phase.ANALYZE), "dvwa.lab.test",
+        make_token(Phase.ANALYZE), ("10.0.0.50",))
+    assert out["invalid_lines"] == 1 and isinstance(vistos[0][0], list)
     NmapServiceScan(runner).run(act("nmap.service_scan", Phase.RECON), "10.0.0.5", make_token(),
                                 ("10.0.0.5",))
     assert len(vistos) == 2

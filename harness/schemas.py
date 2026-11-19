@@ -18,7 +18,7 @@ class Asset:
     in_scope: bool = True
     reason: str | None = None          # motivo si está fuera de alcance
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.source_tool:
             raise SchemaError("Asset requiere source_tool")
 
@@ -71,7 +71,7 @@ class PrioritizedVuln:
     priority: float | None = None       # None = "sin puntaje" (va al final)
     needs_review: bool = False          # contradicción entre herramientas (D8)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.status not in {"confirmed", "discarded", "inconclusive"}:
             raise SchemaError("status inválido")
         if not self.rationale.strip():

@@ -1,0 +1,25 @@
+id: ptaas-x-powered-by-version
+info:
+  name: Encabezado X-Powered-By con versión
+  author: ptaas
+  severity: info
+  description: X-Powered-By expone el lenguaje o framework y su versión.
+  tags: tech,exposure
+  classification:
+    cwe-id: CWE-497
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    redirects: false
+    matchers:
+      - type: regex
+        part: header
+        regex:
+          - "(?im)^x-powered-by: *[a-z][a-z0-9 _.-]*/[0-9]"
+    extractors:
+      - type: regex
+        part: header
+        group: 1
+        regex:
+          - "(?im)^x-powered-by: *([^\r\n]{1,80})"

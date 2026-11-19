@@ -392,3 +392,31 @@ def test_exclusiones_que_cubren_todo_por_union():
         parse_roe(roe_data(scope={"cidrs": ["10.99.0.0/24"], "domains": []},
                            exclusions={"hosts": ["10.99.0.0/25", "10.99.0.128/25"],
                                        "domains": []}))
+
+
+# --- change 005: criticidad opcional por host ---------------------------------------------
+def test_criticidad_valida_y_por_defecto():
+    from harness.roe import criticality_of
+    roe = parse_roe(roe_data(criticality={"DVWA.lab.test": 4, "10.99.0.20": 5}))
+    assert roe.criticality == (("10.99.0.20", 5), ("dvwa.lab.test", 4))
+    assert criticality_of(roe, "dvwa.lab.test") == (4, False)
+    assert criticality_of(roe, "juiceshop.lab.test") == (3, True)
+
+
+@pytest.mark.parametrize("value", [9, 0, "4", 4.0, True, None])
+def test_criticidad_fuera_de_rango(value):
+    with pytest.raises(RoEError) as exc:
+        parse_roe(roe_data(criticality={"dvwa.lab.test": value}))
+    assert any("criticality.dvwa.lab.test" in e for e in exc.value.errors)
+
+
+@pytest.mark.parametrize("host", ["otro.lab.test", "10.98.0.5", "-x"])
+def test_criticidad_de_un_host_fuera_del_alcance(host):
+    with pytest.raises(RoEError) as exc:
+        parse_roe(roe_data(criticality={host: 4}))
+    assert any("criticality" in e for e in exc.value.errors)
+
+
+def test_criticidad_que_no_es_mapa():
+    with pytest.raises(RoEError):
+        parse_roe(roe_data(criticality=["dvwa.lab.test"]))

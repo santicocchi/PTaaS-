@@ -1,0 +1,25 @@
+id: ptaas-server-version
+info:
+  name: Encabezado Server con versión
+  author: ptaas
+  severity: info
+  description: El encabezado Server expone producto y versión (ayuda a correlacionar CVE).
+  tags: tech,exposure
+  classification:
+    cwe-id: CWE-497
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    redirects: false
+    matchers:
+      - type: regex
+        part: header
+        regex:
+          - "(?im)^server: *[a-z][a-z0-9 _-]*/[0-9]"
+    extractors:
+      - type: regex
+        part: header
+        group: 1
+        regex:
+          - "(?im)^server: *([^\r\n]{1,80})"

@@ -45,6 +45,8 @@ class RoE:
     phases: frozenset[Phase]
     approver: str
     digest: str
+    # change 005: criticidad opcional por host (1..5); un host sin entrada vale 3.
+    criticality: tuple[tuple[str, int], ...] = ()
     # Fuente validada: el emisor vuelve a parsearla y no confía en los demás campos.
     source: dict[str, Any] = field(compare=False, repr=False, default_factory=dict)
 
@@ -186,6 +188,8 @@ def _parse(source: str | dict[str, Any]) -> RoE:
                             for c in contacts):
         errors.append("emergency_contacts: cada contacto necesita name y channel")
 
+    criticality = _parse_criticality(data.get("criticality"), cidrs, domains, errors)
+
     approval = _as_dict(data.get("approval"), "approval", errors)
     if approval and not approval.get("approver"):
         errors.append("approval.approver: campo obligatorio")
@@ -202,7 +206,40 @@ def _parse(source: str | dict[str, Any]) -> RoE:
     return RoE(engagement_id=str(eng), cidrs=tuple(cidrs), domains=tuple(domains),
                excluded=tuple(excluded), window_start=start, window_end=end,
                phases=frozenset(phases), approver=str(approval["approver"]), digest=digest,
-               source=data)
+               criticality=criticality, source=data)
+
+
+DEFAULT_CRITICALITY = 3
+
+
+def criticality_of(roe: RoE, host: str) -> tuple[int, bool]:
+    """(criticidad, es_por_defecto) del host según el RoE (change 005, D6)."""
+    value = dict(roe.criticality).get(host)
+    return (DEFAULT_CRITICALITY, True) if value is None else (value, False)
+
+
+def _parse_criticality(raw: Any, cidrs: list[str], domains: list[str],
+                       errors: list[str]) -> tuple[tuple[str, int], ...]:
+    entries = _as_dict(raw, "criticality", errors)
+    out: list[tuple[str, int]] = []
+    for key, value in entries.items():
+        host = normalize_target(str(key))
+        if host is None:
+            errors.append(f"criticality: host inválido {key!r}")
+            continue
+        try:
+            ip = ipaddress.ip_address(host)
+            inside = any(ip in ipaddress.ip_network(c) for c in cidrs)
+        except ValueError:
+            inside = _in_domains(host, domains)
+        if not inside:
+            errors.append(f"criticality: {key} está fuera del alcance")
+            continue
+        if type(value) is not int or not 1 <= value <= 5:
+            errors.append(f"criticality.{key}: debe ser un entero de 1 a 5")
+            continue
+        out.append((host, value))
+    return tuple(sorted(out))
 
 
 def _excludes_everything(cidrs: list[str], domains: list[str], excluded: list[str]) -> bool:

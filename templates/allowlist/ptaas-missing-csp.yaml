@@ -1,0 +1,25 @@
+id: ptaas-missing-csp
+info:
+  name: Falta Content-Security-Policy
+  author: ptaas
+  severity: info
+  description: La respuesta no trae Content-Security-Policy.
+  tags: headers,misconfig
+  classification:
+    cwe-id: CWE-693
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    redirects: false
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 302
+      - type: regex
+        part: header
+        negative: true
+        regex:
+          - "(?im)^content-security-policy:"

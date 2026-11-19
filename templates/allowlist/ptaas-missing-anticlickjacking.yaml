@@ -1,0 +1,26 @@
+id: ptaas-missing-anticlickjacking
+info:
+  name: Falta protección contra clickjacking
+  author: ptaas
+  severity: info
+  description: No hay X-Frame-Options ni frame-ancestors en Content-Security-Policy.
+  tags: headers,misconfig
+  classification:
+    cwe-id: CWE-1021
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    redirects: false
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+          - 302
+      - type: regex
+        part: header
+        negative: true
+        regex:
+          - "(?im)^x-frame-options:"
+          - "(?im)^content-security-policy:.*frame-ancestors"
