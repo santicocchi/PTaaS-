@@ -47,3 +47,18 @@ Toda capability habilitada en `policy.yaml` DEBE existir en `tools.yaml` y vicev
 - GIVEN una capability presente en un solo archivo
 - WHEN corre la verificación de coherencia
 - THEN el test falla
+
+<!-- Archivado desde el change 008-spec-hardening -->
+
+## Requirement: Red del laboratorio coherente con la política
+La subred de `lab/docker-compose.yml` DEBE estar fijada y contenida en `targets.lab_only_cidrs` de `harness/profiles.yaml`, y la red DEBE ser `internal: true`.
+
+### Scenario: subred no fijada o distinta
+- GIVEN un `docker-compose.yml` sin subred, o con una subred fuera de `lab_only_cidrs`
+- WHEN corre el test de coherencia
+- THEN el test falla indicando la diferencia
+
+### Scenario: red con salida a internet
+- GIVEN la red del laboratorio sin `internal: true`
+- WHEN corre el test de coherencia
+- THEN el test falla
