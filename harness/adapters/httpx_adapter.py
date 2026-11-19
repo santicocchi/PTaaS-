@@ -56,6 +56,9 @@ def build_argv(target: str, addresses: tuple[str, ...], profile: dict[str, Any] 
     return argv
 
 
+MAX_TECH = 20                       # una respuesta hostil no infla el grafo
+
+
 def _service(target: str, allowed: set[str] | None) -> Any:
     def parse(obj: dict[str, Any]) -> Record | None:
         try:
@@ -80,7 +83,7 @@ def _service(target: str, allowed: set[str] | None) -> Any:
                 "status_code": status,
                 "title": clean_text(obj.get("title")),
                 "webserver": clean_text(obj.get("webserver")),
-                "tech": [t for t in (clean_text(x) for x in tech) if t],
+                "tech": [t for t in (clean_text(x) for x in tech[:MAX_TECH]) if t],
                 "location": location or None,
             }
         except (KeyError, TypeError, ValueError):

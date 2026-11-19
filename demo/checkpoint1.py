@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import copy
 import dataclasses
+import ipaddress
 import os
 import sqlite3
 import sys
@@ -129,9 +130,15 @@ def lab_get(poc_id: str, params: dict[str, str], address: str) -> ResponseRecord
         def redirect_request(self, *args: Any, **kwargs: Any) -> None:
             return None
 
+    path = params["path"]
+    # La ruta tiene que empezar con "/": sin eso, "@otro.host/x" cambiaría el destino.
+    if not path.startswith("/") or path.startswith("//") or any(c <= " " for c in path):
+        raise ValueError(f"ruta inválida: {path!r}")
+    ip = ipaddress.ip_address(address)
+    netloc = f"[{ip}]" if ip.version == 6 else str(ip)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     host = urllib.parse.urlsplit(params["base_url"]).hostname or ""
-    request = urllib.request.Request(f"http://{address}{params['path']}", headers={"Host": host})
+    request = urllib.request.Request(f"http://{netloc}{path}", headers={"Host": host})
     try:
         with opener.open(request, timeout=10) as resp:
             body = resp.read(65536).decode("utf-8", "replace")

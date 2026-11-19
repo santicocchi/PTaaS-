@@ -24,7 +24,8 @@ def test_subfinder_solo_acepta_dominios(target):
         build_argv(target)
 
 
-@pytest.mark.parametrize("flag", ["-all", "-recursive", "-active", "-ip", "-pc"])
+@pytest.mark.parametrize("flag", ["-all", "-recursive", "-active", "-ip", "-pc", "--all",
+                                  "-o", "-output=x", "-oD", "-r", "-rL"])
 def test_perfil_con_argumento_prohibido_falla(flag):
     profile = dict(load_profiles()["subfinder"])
     profile["fixed_args"] = [*profile["fixed_args"], flag]

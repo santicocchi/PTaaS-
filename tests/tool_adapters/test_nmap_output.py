@@ -41,3 +41,11 @@ def test_run_devuelve_servicios():
     out = adapter.run(act("nmap.service_scan", Phase.RECON), "dvwa.lab.test", make_token(),
                       ("10.99.0.3",))
     assert out["tool"] == "nmap" and out["services"][0]["port"] == 80 and "raw" in out
+
+
+def test_host_que_no_se_escaneo_se_descarta():
+    raw = (FIX / "nmap_dvwa.xml").read_text()
+    escaneado = parse_output(raw)["services"][0]["address"]
+    out = parse_output(raw, ("10.99.0.200",))
+    assert out["services"] == [] and out["status"] == "invalid_output"
+    assert parse_output(raw, (escaneado,))["services"]

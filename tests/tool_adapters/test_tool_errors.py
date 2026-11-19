@@ -60,3 +60,28 @@ def test_la_herramienta_no_hereda_la_entrada_estandar():
                           capture_output=True, timeout=30, check=True,
                           cwd=Path(__file__).resolve().parents[2])
     assert proc.stdout.strip() == "''"
+
+
+def test_runner_real_traduce_binario_no_ejecutable(tmp_path):
+    script = tmp_path / "herramienta"
+    script.write_text("#!/bin/sh\necho hola\n")
+    script.chmod(0o644)                          # existe pero no se puede ejecutar
+    with pytest.raises(common.ToolFailure) as denied:
+        common.default_runner([str(script)], 5)
+    assert denied.value.kind == "exec_error"
+
+
+def test_runner_real_tolera_salida_no_utf8():
+    out = common.default_runner(["printf", "ok\\377\\376fin"], 5)
+    assert out.startswith("ok") and out.endswith("fin") and "\ufffd" in out
+
+
+@pytest.mark.parametrize("arg", ["--script", "-script", "--script=vuln", "-script=vuln"])
+def test_reject_forbidden_normaliza_guiones_y_forma_con_igual(arg):
+    with pytest.raises(common.ForbiddenArgument):
+        common.reject_forbidden(["-sV", arg], ["--script"])
+
+
+def test_reject_forbidden_no_confunde_valores_con_flags():
+    # Un valor (sin guion) que coincide con el nombre de un flag no es el flag.
+    common.reject_forbidden(["-H", "Host: script", "script"], ["--script"])

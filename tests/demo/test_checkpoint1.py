@@ -1,6 +1,8 @@
 """La demo del Checkpoint 1 sigue andando (modo simulación: no envía tráfico)."""
 import sqlite3
 
+import pytest
+
 from demo import checkpoint1
 from harness.audit import verify_file
 
@@ -31,3 +33,11 @@ def test_demo_lab_sin_laboratorio_no_hace_nada(tmp_path, monkeypatch, capsys):
     assert checkpoint1.main(["--lab", "--out", str(tmp_path)]) == 2
     assert not list(tmp_path.iterdir())
     assert "runner" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("path", ["@otro.example/x", "//otro.example/x", "/a b", "x", "/\r\nX: y"])
+def test_lab_get_rechaza_rutas_que_cambian_el_destino(path):
+    # Falla antes de abrir ninguna conexión.
+    with pytest.raises(ValueError):
+        checkpoint1.lab_get("POC-X", {"base_url": "http://dvwa.lab.test", "path": path},
+                            "10.99.0.10")

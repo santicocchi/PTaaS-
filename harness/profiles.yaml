@@ -54,6 +54,12 @@ subfinder:
     - "-config"
     - "-pc"
     - "-provider-config"
+    - "-o"               # escribir archivos queda fuera: la salida va por stdout
+    - "-output"
+    - "-oD"
+    - "-output-dir"
+    - "-r"               # resolvers propios
+    - "-rL"
   timeout_s: 400
   output: jsonl
 
@@ -77,5 +83,14 @@ httpx:
     - "-x"
     - "-body"
     - "-path"
+    - "-p"               # puertos extra: el sondeo es sobre el puerto de la URL
+    - "-ports"
+    - "-csp-probe"       # siguen a dominios del CSP o del certificado, fuera del objetivo
+    - "-tls-probe"
+    - "-ss"              # capturas con navegador headless
+    - "-screenshot"
+    - "-config"
+    - "-o"
+    - "-output"
   timeout_s: 120
   output: jsonl

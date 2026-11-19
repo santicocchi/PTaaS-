@@ -68,11 +68,17 @@ def validate_url(url: str) -> str:
     return url.strip()
 
 
+def _flag_name(arg: str) -> str:
+    """`--script=vuln`, `-script` y `--script` son el mismo flag: nmap (getopt_long_only) y las
+    herramientas en Go aceptan uno o dos guiones y la forma `flag=valor`."""
+    return arg.lstrip("-").split("=", 1)[0]
+
+
 def reject_forbidden(argv: list[str], forbidden: list[str]) -> None:
+    banned = {_flag_name(f) for f in forbidden}
     for a in argv:
-        for f in forbidden:
-            if a == f or a.startswith(f + "="):
-                raise ForbiddenArgument(f"argumento prohibido: {a}")
+        if a.startswith("-") and _flag_name(a) in banned:
+            raise ForbiddenArgument(f"argumento prohibido: {a}")
 
 
 Runner = Callable[[list[str], int], str]
@@ -100,13 +106,17 @@ def default_runner(argv: list[str], timeout_s: int) -> str:
     """
     try:
         # stdin vacío: httpx (y otras) leen objetivos de stdin si es un pipe.
+        # La salida es dato no confiable: bytes no UTF-8 se reemplazan en vez de romper.
         proc = subprocess.run(argv, shell=False, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
                               stdin=subprocess.DEVNULL, timeout=timeout_s, check=False,
                               env=safe_env())
     except FileNotFoundError as exc:
         raise ToolFailure("binary_missing") from exc
     except subprocess.TimeoutExpired as exc:
         raise ToolFailure("timeout") from exc
+    except OSError as exc:                     # sin permiso de ejecución, formato inválido…
+        raise ToolFailure("exec_error") from exc
     if proc.returncode != 0:
         raise ToolFailure("exit_code")
     return proc.stdout

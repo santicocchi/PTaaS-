@@ -1,6 +1,7 @@
 """Adaptador nmap.service_scan: detección de servicios acotada y sin scripts."""
 from __future__ import annotations
 
+import ipaddress
 import xml.etree.ElementTree as ET
 from collections.abc import Sequence
 from typing import Any
@@ -49,8 +50,11 @@ def _service(address: str, port: ET.Element) -> dict[str, Any] | None:
             "service": get("name"), "tech": tech}
 
 
-def parse_output(raw: str) -> dict[str, Any]:
+def parse_output(raw: str, addresses: Sequence[str] | None = None) -> dict[str, Any]:
     """Puertos abiertos de la salida XML de nmap. Es salida de una herramienta: no confiable.
+
+    Con `addresses`, un host que no sea una de las IP escaneadas se descarta y cuenta como
+    inválido: nmap no debería reportarlo, y si aparece no entra al grafo.
 
     `xml.etree` (expat) no resuelve entidades externas y expat ≥ 2.4 corta la expansión
     exponencial de entidades.
@@ -61,12 +65,14 @@ def parse_output(raw: str) -> dict[str, Any]:
         root = ET.fromstring(raw)
     except ET.ParseError:
         return {"status": "invalid_output", "services": [], "invalid_lines": 1}
+    allowed = None if addresses is None else {str(ipaddress.ip_address(a)) for a in addresses}
     services: list[dict[str, Any]] = []
     invalid = 0
     for host in root.iter("host"):
         addr = host.find("address")
         address = normalize_target(addr.get("addr", "")) if addr is not None else None
-        if address is None or not _is_ip(address):
+        if address is None or not _is_ip(address) or (
+                allowed is not None and str(ipaddress.ip_address(address)) not in allowed):
             invalid += 1
             continue
         for port in host.iter("port"):
@@ -99,4 +105,4 @@ class NmapServiceScan:
         if raw is None:
             return tool_error("nmap", target, str(error))
         return {"tool": "nmap", "target": target, "format": "xml", "raw": raw,
-                **parse_output(raw)}
+                **parse_output(raw, addresses)}

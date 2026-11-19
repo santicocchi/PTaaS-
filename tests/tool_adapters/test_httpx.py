@@ -46,7 +46,9 @@ def test_entradas_invalidas_se_rechazan(target, addresses):
         build_argv(target, addresses, rps=5)
 
 
-@pytest.mark.parametrize("flag", ["-fr", "-follow-redirects", "-fhr", "-maxr", "-proxy", "-x"])
+@pytest.mark.parametrize("flag", ["-fr", "-follow-redirects", "-fhr", "-maxr", "-proxy", "-x",
+                                  "--fr", "--follow-redirects=true", "-csp-probe", "-tls-probe",
+                                  "-ss", "-screenshot", "-config", "-p", "--ports=8080", "-o"])
 def test_perfil_con_argumento_prohibido_falla(flag):
     profile = dict(load_profiles()["httpx"])
     profile["fixed_args"] = [*profile["fixed_args"], flag]
@@ -107,3 +109,10 @@ def test_run_via_runner():
 def test_rate_limit_sale_de_la_politica():
     adapter = HttpxProbe(lambda argv, t: "")
     assert adapter.rps == 5
+
+
+def test_lista_de_tecnologias_acotada():
+    tech = ", ".join(f'"t{i}"' for i in range(500))
+    raw = ('{"url":"http://10.99.0.3","port":"80","status_code":200,"tech":[' + tech + "]}")
+    (svc,) = parse_output("dvwa.lab.test", raw)["services"]
+    assert len(svc["tech"]) == 20
