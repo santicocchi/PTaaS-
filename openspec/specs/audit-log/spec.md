@@ -1,6 +1,6 @@
 # Spec — audit-log
 
-Tests: `tests/test_audit_and_policy.py`, `tests/test_authorization.py`, `tests/test_audit_persistence.py`
+Tests: `tests/test_audit_and_policy.py`, `tests/test_authorization.py`, `tests/test_audit_persistence.py`, `tests/audit_log/test_tool_error_reasons.py`, `tests/audit_log/test_anchor_race.py`
 
 ## Requirement: Registro total
 El sistema DEBE registrar toda decisión del harness: OK, BLOCKED, PENDING_HITL y ABORTED, con agente, acción, objetivo, fase, token/engagement y marca de tiempo.
@@ -131,3 +131,18 @@ Todo registro BLOCKED DEBE incluir un motivo de un conjunto cerrado: `out_of_sco
 - GIVEN un token cuya ventana terminó
 - WHEN se invoca una acción en alcance
 - THEN el registro BLOCKED tiene `reason = token_expired`
+
+<!-- Archivado desde el change 004-recon-loop-a -->
+
+## Requirement: Motivo de un error de herramienta
+Un registro no BLOCKED PUEDE llevar motivo solo si pertenece al conjunto cerrado de errores de herramienta: `timeout`, `binary_missing`, `exit_code`, `invalid_output`. Cualquier otro motivo DEBE rechazarse al escribir.
+
+### Scenario: herramienta que excede su timeout
+- GIVEN httpx que excede su timeout durante el loop A
+- WHEN el orquestador lo registra
+- THEN queda `tool.error` con resultado ABORTED y `reason = timeout`, y la cadena sigue íntegra
+
+### Scenario: motivo inventado
+- GIVEN un registro ABORTED con motivo "lo que sea"
+- WHEN se intenta escribir
+- THEN se rechaza
