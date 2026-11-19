@@ -97,9 +97,9 @@ def parse_output(target: str, raw: str,
 
 
 class HttpxProbe:
-    name = "httpx.probe"
-    allowed_phases = (Phase.RECON,)
-    destructive = False
+    name: str = "httpx.probe"
+    allowed_phases: tuple[Phase, ...] = (Phase.RECON,)
+    destructive: bool = False
 
     def __init__(self, runner: Runner = default_runner, profile: dict[str, Any] | None = None,
                  rps: int | None = None) -> None:

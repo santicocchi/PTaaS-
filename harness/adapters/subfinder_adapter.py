@@ -46,9 +46,9 @@ def parse_output(raw: str) -> dict[str, Any]:
 class SubfinderEnum:
     """Pasivo: consulta fuentes públicas y no se conecta al objetivo, por eso no usa
     `addresses` (no hay IP que fijar). En el laboratorio, sin internet, devuelve vacío."""
-    name = "subfinder.enum"
-    allowed_phases = (Phase.RECON,)
-    destructive = False
+    name: str = "subfinder.enum"
+    allowed_phases: tuple[Phase, ...] = (Phase.RECON,)
+    destructive: bool = False
 
     def __init__(self, runner: Runner = default_runner,
                  profile: dict[str, Any] | None = None) -> None:

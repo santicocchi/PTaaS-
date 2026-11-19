@@ -31,9 +31,9 @@ def build_argv(url: str, profile: dict | None = None) -> list[str]:
 
 
 class NucleiSafeTemplates:
-    name = "nuclei.safe_templates"
-    allowed_phases = (Phase.ANALYZE,)
-    destructive = False
+    name: str = "nuclei.safe_templates"
+    allowed_phases: tuple[Phase, ...] = (Phase.ANALYZE,)
+    destructive: bool = False
 
     def __init__(self, runner: Runner = default_runner, profile: dict | None = None):
         self._runner = runner

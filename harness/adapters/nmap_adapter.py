@@ -83,9 +83,9 @@ def parse_output(raw: str) -> dict[str, Any]:
 
 
 class NmapServiceScan:
-    name = "nmap.service_scan"
-    allowed_phases = (Phase.RECON,)
-    destructive = False
+    name: str = "nmap.service_scan"
+    allowed_phases: tuple[Phase, ...] = (Phase.RECON,)
+    destructive: bool = False
 
     def __init__(self, runner: Runner = default_runner, profile: dict[str, Any] | None = None):
         self._runner = runner
