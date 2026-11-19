@@ -1,0 +1,25 @@
+# RoE de la demo de punta a punta (change 005): relevamiento → correlación → análisis.
+# Solo laboratorio propio, red aislada 10.99.0.0/24.
+#
+# Es otro archivo que roe-lab.yaml a propósito: el Checkpoint 1 muestra que un token de
+# análisis se rechaza cuando el RoE no autoriza esa fase, así que ese RoE no la autoriza.
+# `engagement_id`, `window` y `approval.roe_sha256` los completa demo/pipeline.py al arrancar.
+engagement_id: se-completa-al-correr
+scope:
+  cidrs: ["10.99.0.0/24"]
+  domains: ["dvwa.lab.test", "juiceshop.lab.test"]
+exclusions:
+  hosts: ["juiceshop.lab.test"]
+window:
+  start: se-completa-al-correr
+  end: se-completa-al-correr
+phases: [recon, correlate, analyze]
+# Criticidad del activo para el negocio (1 a 5). Un host sin entrada vale 3 y el informe lo dice.
+criticality:
+  dvwa.lab.test: 4
+emergency_contacts:
+  - name: Responsable del laboratorio
+    channel: "lab-ptaas (canal interno del equipo)"
+approval:
+  approver: reviewer@lab
+  roe_sha256: se-completa-al-correr

@@ -81,3 +81,45 @@ fuera de alcance y por qué), lo que se entrega a correlación y la bitácora ve
 objetivos, que son datos hostiles; si algo saliera mal adentro del contenedor, no puede modificar
 el código del harness. Lo único escribible es `demo/out/`. Los tests (`pytest`) se corren en tu
 máquina, no en el runner.
+
+---
+
+# Pipeline: relevamiento → correlación → análisis (change 005)
+
+**Antes de levantar el laboratorio (una sola vez):** ZAP corre como servicio y su API pide una
+clave. La clave no va en el repo: se genera en tu máquina y queda en `lab/.env` (ignorado por
+git). Sin ese archivo `docker compose` no arranca y te dice qué falta.
+
+```bash
+echo "PTAAS_ZAP_API_KEY=$(openssl rand -hex 16)" > lab/.env
+docker compose -f lab/docker-compose.yml up -d --build      # runner con nuclei + servicio zap
+```
+
+```bash
+python -m demo.pipeline                                                    # simulación
+docker compose -f lab/docker-compose.yml exec runner python -m demo.pipeline --lab
+```
+
+Usa `demo/roe-pipeline.yaml`, que autoriza recon, correlate y analyze (el RoE del Checkpoint 1
+no autoriza analyze, y eso es lo que muestra su paso 3). Un mismo engagement, un token por fase:
+
+1. **Relevamiento:** el loop A de arriba.
+2. **Correlación:** las versiones del grafo contra los snapshots de `data/feeds/`, sin internet.
+   Hoy el snapshot es **sintético** (`CVE-2099-…`, la demo lo avisa). El real lo genera el
+   equipo con `python tools/build_feeds.py --cpe apache:http_server:2.4.25 …` y lo sube en un PR.
+   La confianza de un candidato por versión nunca pasa de media; con un `(Debian)` en el banner
+   baja a baja (puede haber backport).
+3. **Análisis:** nuclei con los templates propios de `templates/allowlist/` y ZAP por su API
+   (modo protegido, solo spider y escaneo pasivo, con `Host` fijado a la IP validada). Muestra
+   cada vulnerabilidad con su estado (`confirmed` / `inconclusive`), su prioridad (solo si hay
+   CVSS) y `revisar` cuando dos verificaciones equivalentes se contradicen.
+
+**nuclei no corre hasta que una persona revise los templates.** Cada uno tiene en
+`templates/allowlist/MANIFEST.md` su hash y un revisor; mientras diga `pendiente` (o el revisor
+sea el autor), el adaptador lo saltea y la demo lista por qué. Para habilitarlos: leer cada
+YAML, poner tu nombre en la columna `revisor` y subirlo en un PR.
+
+Corrida en el laboratorio (19/11/2026, templates habilitados en una copia temporal): Apache
+2.4.25 (Debian) → CVE-2099-0001 y -0002 inconclusos con confianza baja (solo versión);
+CWE-693 (falta CSP), CWE-497 (versión en `Server`) y CWE-1004 (cookie sin HttpOnly) confirmados
+por evidencia de confianza alta de nuclei o ZAP; sin contradicciones. 12 registros en la bitácora, cadena íntegra.

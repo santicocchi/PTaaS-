@@ -229,6 +229,20 @@ def load_feeds(base: Path = FEEDS_DIR, *, max_age_days: int,
                  synthetic=bool(manifest.get("synthetic", False)))
 
 
+def policy_max_age_days(policy: dict[str, Any] | None = None) -> int:
+    """`limits.max_feed_age_days` de policy.yaml (D2). Un valor raro es un error, no un default."""
+    from harness.policy_loader import load_policy
+
+    value = (policy or load_policy())["limits"]["max_feed_age_days"]
+    if type(value) is not int or value < 1:
+        raise ValueError(f"limits.max_feed_age_days inválido: {value!r}")
+    return value
+
+
+def load_feeds_by_policy(base: Path = FEEDS_DIR, now: datetime | None = None) -> Feeds:
+    return load_feeds(base, max_age_days=policy_max_age_days(), now=now)
+
+
 def load_attack_map(path: Path = ATTACK_MAP) -> dict[str, str]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return {str(k): str(v) for k, v in (data.get("cwe_to_attack") or {}).items()

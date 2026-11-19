@@ -192,9 +192,10 @@ def open_ports(xml_text: str) -> list[str]:
 
 # ---- RoE -----------------------------------------------------------------------------------
 
-def prepare_roe(engagement_id: str, now: datetime) -> dict[str, Any]:
+def prepare_roe(engagement_id: str, now: datetime,
+                template: Path = ROE_TEMPLATE) -> dict[str, Any]:
     """Completa el RoE de la demo y lo "aprueba" (calcula el hash como haría el reviewer)."""
-    data: dict[str, Any] = yaml.safe_load(ROE_TEMPLATE.read_text(encoding="utf-8"))
+    data: dict[str, Any] = yaml.safe_load(template.read_text(encoding="utf-8"))
     data["engagement_id"] = engagement_id
     data["window"] = {"start": (now - timedelta(minutes=5)).isoformat(timespec="seconds"),
                       "end": (now + timedelta(hours=8)).isoformat(timespec="seconds")}

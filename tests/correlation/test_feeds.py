@@ -8,9 +8,11 @@ from harness.feeds import (
     FeedUnavailable,
     is_distro_marker,
     load_feeds,
+    load_feeds_by_policy,
     parse_epss,
     parse_nvd,
     parse_version,
+    policy_max_age_days,
     split_tech,
 )
 from tests.correlation.helpers import NOW, make_feeds
@@ -63,6 +65,18 @@ def test_snapshot_desactualizado(tmp_path):
     assert load_feeds(make_feeds(tmp_path, age_days=45), max_age_days=30, now=NOW).stale
     assert not load_feeds(make_feeds(tmp_path / "b", age_days=30), max_age_days=30,
                           now=NOW).stale
+
+
+def test_la_antiguedad_maxima_sale_de_la_politica(tmp_path):
+    assert policy_max_age_days() == 30
+    assert load_feeds_by_policy(make_feeds(tmp_path, age_days=45), now=NOW).stale
+    assert not load_feeds_by_policy(make_feeds(tmp_path / "b", age_days=3), now=NOW).stale
+
+
+@pytest.mark.parametrize("bad", [0, -1, "30", 3.5, True, None])
+def test_antiguedad_maxima_invalida_es_un_error(bad):
+    with pytest.raises(ValueError):
+        policy_max_age_days({"limits": {"max_feed_age_days": bad}})
 
 
 def test_rango_de_versiones(tmp_path):

@@ -79,6 +79,14 @@ services:
       - bruteforce
       - -addonuninstall
       - oast
+    # El chequeo de la imagen apunta a localhost, que la API no acepta (solo escucha en
+    # 10.97.0.20): se reemplaza por uno contra su propia dirección.
+    healthcheck:
+      test: ["CMD", "curl", "--silent", "--output", "/dev/null", "--fail", "http://10.97.0.20:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
     networks:
       lab:
       tools:

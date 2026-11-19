@@ -30,6 +30,7 @@ gates_hitl:
 limits:
   max_loop_iterations: {recon: 5, detection: 4, validation: 2}
   rate_limit_rps_per_target: 5
+  max_feed_age_days: 30               # change 005: snapshot más viejo → feed_stale
   destructive_actions: forbidden      # fuera del MVP
 
 sandbox:
