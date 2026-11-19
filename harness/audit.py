@@ -21,6 +21,7 @@ from harness.contracts import (
     Result,
     ScopeToken,
     make_entry,
+    phase_label,
     verify_chain,
 )
 
@@ -161,25 +162,33 @@ class SqliteAuditLog:
         if token.engagement_id != self.engagement_id:
             raise ValueError("el token es de otro engagement")
         return self._append(engagement=self.engagement_id, agent=agent, action=action.name,
-                            target=target, phase=token.phase.value, result=result,
+                            target=target, phase=phase_label(token), result=result,
                             reason=reason, evidence=evidence)
 
-    def record_kill(self, engagement_id: str, agent: str) -> Entry:
+    def record_control(self, engagement_id: str, agent: str, action: str, target: str,
+                       result: Result, reason: str | None = None) -> Entry:
         if engagement_id != self.engagement_id:
-            raise ValueError("kill switch de otro engagement")
-        return self._append(engagement=engagement_id, agent=agent, action=KILLSWITCH_ACTION,
-                            target=engagement_id, phase="control", result=Result.ABORTED)
+            raise ValueError("registro de control de otro engagement")
+        return self._append(engagement=engagement_id, agent=agent, action=action,
+                            target=target, phase="control", result=result, reason=reason)
+
+    def record_kill(self, engagement_id: str, agent: str) -> Entry:
+        return self.record_control(engagement_id, agent, KILLSWITCH_ACTION, engagement_id,
+                                   Result.ABORTED)
 
     # -- lectura y verificación ------------------------------------------------
     @property
     def entries(self) -> list[Entry]:
         return _read_entries(self._con())
 
-    def killed_engagements(self) -> set[str]:
+    def control_engagements(self, action: str, result: Result = Result.ABORTED) -> set[str]:
         row = self._con().execute(
-            "SELECT 1 FROM audit WHERE action = ? AND phase = 'control' AND result = 'ABORTED' "
-            "LIMIT 1", (KILLSWITCH_ACTION,)).fetchone()
+            "SELECT 1 FROM audit WHERE action = ? AND phase = 'control' AND result = ? LIMIT 1",
+            (action, result.value)).fetchone()
         return {self.engagement_id} if row else set()
+
+    def killed_engagements(self) -> set[str]:
+        return self.control_engagements(KILLSWITCH_ACTION)
 
     def verify_integrity(self) -> None:
         """Cadena íntegra y, dentro del proceso, sin registros perdidos al final.

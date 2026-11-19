@@ -179,11 +179,12 @@ def test_objetivo_unicode_zona_o_guion_inicial_se_bloquea(env, token, target):
     assert audit.entries[-1]["reason"] == "out_of_scope"
 
 
-# Scenarios de "Token emitido por el harness": se implementan en el change 003.
-@pytest.mark.xfail(strict=True, reason="change 003: emisor de tokens con integridad")
+# Scenario de "Token emitido por el harness" (008), implementado en el change 003.
 def test_token_fabricado_se_bloquea_como_invalido(env):
+    from harness.contracts import ScopeToken
     h, _, audit, *_ = env
-    falso = make_token(cidrs=("0.0.0.0/0",))
+    falso = ScopeToken("eng-1", ("0.0.0.0/0",), (), time.time() - 5, time.time() + 600,
+                       Phase.RECON)
     with pytest.raises(ScopeViolation):
         h.invoke("recon", act("httpx.probe", Phase.RECON), "10.0.0.5", falso)
     assert audit.entries[-1]["reason"] == "token_invalid"
