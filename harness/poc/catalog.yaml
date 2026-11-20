@@ -19,8 +19,8 @@ entries:
     lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
     proposed_by: claude      # 010: suma phantomcorp a lab_targets
-    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
-    approved_at: ""
+    approved_by: santiago
+    approved_at: "2026-11-20"
 
   - id: POC-CSP-001
     version: "1.1.0"
@@ -33,8 +33,8 @@ entries:
     lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
     proposed_by: claude      # 010: suma phantomcorp a lab_targets
-    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
-    approved_at: ""
+    approved_by: santiago
+    approved_at: "2026-11-20"
 
   - id: POC-COOKIE-001
     version: "1.1.0"
@@ -47,8 +47,8 @@ entries:
     lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
     proposed_by: claude      # 010: suma phantomcorp a lab_targets
-    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
-    approved_at: ""
+    approved_by: santiago
+    approved_at: "2026-11-20"
 
   - id: POC-DIRLIST-001
     version: "1.1.0"
@@ -61,8 +61,8 @@ entries:
     lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
     proposed_by: claude      # 010: suma phantomcorp a lab_targets
-    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
-    approved_at: ""
+    approved_by: santiago
+    approved_at: "2026-11-20"
 
   - id: POC-REFLECT-001
     version: "1.1.0"
@@ -77,8 +77,8 @@ entries:
     lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
     proposed_by: claude      # 010: suma phantomcorp a lab_targets
-    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
-    approved_at: ""
+    approved_by: santiago
+    approved_at: "2026-11-20"
 
   - id: POC-ERRDISC-001
     version: "1.1.0"
@@ -91,5 +91,5 @@ entries:
     lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
     proposed_by: claude      # 010: suma phantomcorp a lab_targets
-    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
-    approved_at: ""
+    approved_by: santiago
+    approved_at: "2026-11-20"
