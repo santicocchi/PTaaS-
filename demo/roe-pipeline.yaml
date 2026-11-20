@@ -1,4 +1,5 @@
-# RoE de la demo de punta a punta (change 005): relevamiento → correlación → análisis.
+# RoE de la demo de punta a punta (changes 005 y 006): relevamiento → correlación → análisis
+# → validación (loop C, `demo/validation.py`, con aprobación del Reviewer por hallazgo).
 # Solo laboratorio propio, red aislada 10.99.0.0/24.
 #
 # Es otro archivo que roe-lab.yaml a propósito: el Checkpoint 1 muestra que un token de
@@ -13,7 +14,7 @@ exclusions:
 window:
   start: se-completa-al-correr
   end: se-completa-al-correr
-phases: [recon, correlate, analyze]
+phases: [recon, correlate, analyze, validate]
 # Criticidad del activo para el negocio (1 a 5). Un host sin entrada vale 3 y el informe lo dice.
 criticality:
   dvwa.lab.test: 4
