@@ -31,7 +31,7 @@ Cuando la RoE es la del integrador y corre contra el laboratorio, `demo/validati
 ### Scenario: procedencia registrada
 - GIVEN la imagen `ptaas-phantomcorp` con Id `sha256:<64 hex>` y el contexto en el commit `1234abc`
 - WHEN corre la validación con la RoE del integrador en `--lab`
-- THEN la bitácora tiene `target.provenance` con `ptaas-phantomcorp@sha256:<64 hex>` y `repo@1234abc`
+- THEN la bitácora tiene `target.provenance` con, en `target` (la evidencia solo admite `<ruta>#sha256=`), `ptaas-phantomcorp@sha256:<64 hex>` y `repo@1234abc`
 
 ### Scenario: sin `lab/.env` o sin imagen
 - GIVEN que no hay `PTAAS_INTEGRADOR_CONTEXT`, `docker image inspect` o `git rev-parse` fallan, o devuelven algo que no es un hash (p. ej. caracteres de control)

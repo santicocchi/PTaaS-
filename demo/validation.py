@@ -453,8 +453,9 @@ def main(argv: list[str] | None = None) -> int:
 
     audit.record_control(eng, AGENT, IMAGE_ACTION, image, Result.OK)    # qué imagen corrió
     if args.lab and is_integrador(data["roe"]):                          # qué target se auditó
-        audit.record_control(eng, AGENT, PROVENANCE_ACTION, INTEGRADOR_HOST, Result.OK,
-                             evidence=target_provenance(runner))
+        # Como `sandbox.image`: va en `target` (la evidencia solo admite `<ruta>#sha256=`).
+        audit.record_control(eng, AGENT, PROVENANCE_ACTION, target_provenance(runner),
+                             Result.OK)
     catalog = load_catalog()
     sandbox = DockerSandbox(eng, catalog, image=image, runner=runner)
     adapter = PocCatalogRun(sandbox, catalog, state_dir=state, catalog_version=catalog_version())
