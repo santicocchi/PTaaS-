@@ -2,8 +2,10 @@
 # Diseño deliberado: TODAS son verificaciones INERTES ("canario"): confirman una
 # debilidad observando la respuesta, sin ejecutar código en el objetivo, sin extraer
 # datos y sin alterar su estado. Ampliar el catálogo requiere un change OpenSpec,
-# revisión del security-reviewer y aprobación humana registrada.
-catalog_version: "0.1.0"
+# revisión del security-reviewer y aprobación humana registrada. Quien aprueba
+# (`approved_by`) no puede ser quien propuso (`proposed_by`), y el `evaluator` tiene que
+# existir en EVALUATORS (harness/poc/catalog.py).
+catalog_version: "0.2.0"   # 006: proposed_by en cada entrada
 
 entries:
   - id: POC-HDR-001
@@ -16,6 +18,7 @@ entries:
     evaluator: header_missing_frame_protection
     lab_targets: [dvwa, juice-shop]
     lab_only: true
+    proposed_by: author@lab
     approved_by: reviewer@lab
     approved_at: "2026-10-30"
 
@@ -29,6 +32,7 @@ entries:
     evaluator: header_missing_csp
     lab_targets: [dvwa, juice-shop]
     lab_only: true
+    proposed_by: author@lab
     approved_by: reviewer@lab
     approved_at: "2026-10-30"
 
@@ -42,6 +46,7 @@ entries:
     evaluator: cookie_flags_missing
     lab_targets: [dvwa, juice-shop]
     lab_only: true
+    proposed_by: author@lab
     approved_by: reviewer@lab
     approved_at: "2026-10-30"
 
@@ -55,6 +60,7 @@ entries:
     evaluator: directory_listing_enabled
     lab_targets: [dvwa, juice-shop]
     lab_only: true
+    proposed_by: author@lab
     approved_by: reviewer@lab
     approved_at: "2026-10-30"
 
@@ -70,6 +76,7 @@ entries:
     evaluator: input_reflected_unencoded
     lab_targets: [dvwa, juice-shop]
     lab_only: true
+    proposed_by: author@lab
     approved_by: reviewer@lab
     approved_at: "2026-10-30"
 
@@ -83,5 +90,6 @@ entries:
     evaluator: verbose_error_disclosure
     lab_targets: [dvwa, juice-shop]
     lab_only: true
+    proposed_by: author@lab
     approved_by: reviewer@lab
     approved_at: "2026-10-30"

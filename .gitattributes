@@ -1,0 +1,5 @@
+# Files verified by SHA-256 must keep the same bytes on every OS
+data/** -text
+templates/** -text
+harness/poc/catalog.yaml -text
+*.sh text eol=lf

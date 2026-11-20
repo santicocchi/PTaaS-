@@ -41,12 +41,12 @@ python evals/run_evals.py --mode golden                                    # CI,
 ANTHROPIC_API_KEY=... python evals/run_evals.py --mode live --report evals/out/live-<fecha>.json
 ```
 
-22 casos repartidos en 5 agentes:
+29 casos repartidos en 5 agentes (7 de validación los sumó el change 006):
 - orchestrator: 3;
 - asset_discovery: 3;
 - correlation: 7;
 - vuln_analysis: 6;
-- validation: 3.
+- validation: 10.
 
 Cada regla de seguridad tiene un test que comprueba que la rúbrica la hace **fallar** cuando la salida está mal, por ejemplo:
 - sondear `cdn.example.com`;

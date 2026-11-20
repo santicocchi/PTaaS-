@@ -29,7 +29,8 @@ __all__ = ["AuditIntegrityError", "SqliteAuditLog", "verify_file"]
 
 ENGAGEMENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _COLUMNS = ("seq", "ts", "engagement", "agent", "action", "target", "phase",
-            "result", "reason", "evidence", "prev", "hash")
+            "result", "reason", "evidence", "subject", "prev", "hash")
+_OPTIONAL = ("reason", "evidence", "subject")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS audit (
@@ -43,6 +44,7 @@ CREATE TABLE IF NOT EXISTS audit (
   result     TEXT    NOT NULL CHECK (result IN ('OK','BLOCKED','PENDING_HITL','ABORTED')),
   reason     TEXT,
   evidence   TEXT,
+  subject    TEXT,
   prev       TEXT    NOT NULL,
   hash       TEXT    NOT NULL UNIQUE
 );
@@ -57,17 +59,24 @@ def genesis(engagement_id: str) -> str:
     return f"GENESIS:{engagement_id}"
 
 
-def _row_to_entry(row: tuple[Any, ...]) -> Entry:
-    entry = dict(zip(_COLUMNS, row, strict=True))
-    for optional in ("reason", "evidence"):
-        if entry[optional] is None:
+def _row_to_entry(columns: tuple[str, ...], row: tuple[Any, ...]) -> Entry:
+    entry = dict(zip(columns, row, strict=True))
+    for optional in _OPTIONAL:
+        if optional in entry and entry[optional] is None:
             del entry[optional]
     return entry
 
 
+def _table_columns(con: sqlite3.Connection) -> list[str]:
+    return [str(r[1]) for r in con.execute("PRAGMA table_info(audit)")]
+
+
 def _read_entries(con: sqlite3.Connection) -> list[Entry]:
-    rows = con.execute(f"SELECT {', '.join(_COLUMNS)} FROM audit ORDER BY seq").fetchall()
-    return [_row_to_entry(r) for r in rows]
+    # Una bitácora de antes de 006 no tiene `subject`: se lee con las columnas que tenga.
+    present = set(_table_columns(con))
+    columns = tuple(c for c in _COLUMNS if c in present)
+    rows = con.execute(f"SELECT {', '.join(columns)} FROM audit ORDER BY seq").fetchall()
+    return [_row_to_entry(columns, r) for r in rows]
 
 
 def verify_file(path: Path) -> str | None:
@@ -105,6 +114,8 @@ class SqliteAuditLog:
         con = log._con()
         con.execute("PRAGMA journal_mode=WAL")
         con.executescript(_SCHEMA)
+        if "subject" not in _table_columns(con):  # 006: bitácora previa, columna opcional
+            con.execute("ALTER TABLE audit ADD COLUMN subject TEXT")
         log._check_triggers(con)
         log.verify_integrity()                  # se verifica al abrir
         return log
@@ -158,19 +169,21 @@ class SqliteAuditLog:
 
     def record(self, agent: str, action: Action, target: str, token: ScopeToken,
                result: Result, reason: str | None = None,
-               evidence: str | None = None) -> Entry:
+               evidence: str | None = None, subject: str | None = None) -> Entry:
         if token.engagement_id != self.engagement_id:
             raise ValueError("el token es de otro engagement")
         return self._append(engagement=self.engagement_id, agent=agent, action=action.name,
                             target=target, phase=phase_label(token), result=result,
-                            reason=reason, evidence=evidence)
+                            reason=reason, evidence=evidence, subject=subject)
 
     def record_control(self, engagement_id: str, agent: str, action: str, target: str,
-                       result: Result, reason: str | None = None) -> Entry:
+                       result: Result, reason: str | None = None,
+                       evidence: str | None = None, subject: str | None = None) -> Entry:
         if engagement_id != self.engagement_id:
             raise ValueError("registro de control de otro engagement")
         return self._append(engagement=engagement_id, agent=agent, action=action,
-                            target=target, phase="control", result=result, reason=reason)
+                            target=target, phase="control", result=result, reason=reason,
+                            evidence=evidence, subject=subject)
 
     def record_kill(self, engagement_id: str, agent: str) -> Entry:
         return self.record_control(engagement_id, agent, KILLSWITCH_ACTION, engagement_id,

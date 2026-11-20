@@ -202,7 +202,7 @@ def test_r13_validacion_sin_flag_de_aprobacion_igual_exige_gate(env):
     h, _, audit, _, adapters = env
     t = make_token(phase=Phase.VALIDATE)
     a = Action("poc_catalog.run_parametrized", Phase.VALIDATE, requires_human_approval=False)
-    out = h.invoke("validation", a, "10.0.0.5", t)
+    out = h.invoke("validation", a, "10.0.0.5", t, subject="F-1")
     assert out == {"status": "PENDING_HITL"}
     assert audit.entries[-1]["result"] == "PENDING_HITL"
     assert adapters["poc_catalog.run_parametrized"].calls == []
