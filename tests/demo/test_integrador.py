@@ -1,11 +1,15 @@
 """Change 010 · tasks 2.6 y 2.7: demos con la RoE del integrador y procedencia del target."""
+import hashlib
 import json
+import sqlite3
 from datetime import datetime
 
 import pytest
 
 from demo import pipeline, validation
 from demo.checkpoint1 import prepare_roe
+from harness.audit import SqliteAuditLog
+from harness.contracts import Result
 from harness.roe import roe_digest
 
 
@@ -147,3 +151,42 @@ def test_sin_env_o_sin_imagen_queda_desconocido(tmp_path, env_text, runner, expe
 def test_solo_el_integrador_registra_procedencia():
     assert validation.is_integrador(integrador_roe())
     assert not validation.is_integrador(prepare_roe("x", now(), pipeline.ROE_TEMPLATE))
+
+
+# --- 2.7 de punta a punta: `main` en modo lab registra la procedencia ---------------------------
+
+def _lab_handoff(inbox, eng):
+    """Entrega de laboratorio con la RoE del integrador, como la deja el pipeline en el runner."""
+    inbox.mkdir()
+    data = {"engagement_id": eng, "mode": "lab", "roe": integrador_roe(eng), "web_hosts": [],
+            "candidates": [], "vulns": [], "observations": []}
+    raw = json.dumps(data).encode()
+    (inbox / f"{eng}.handoff.json").write_bytes(raw)
+    audit = SqliteAuditLog.open(eng, inbox)
+    audit.record_control(eng, "orchestrator", pipeline.HANDOFF_ACTION, f"{eng}.handoff.json",
+                         Result.OK,
+                         evidence=f"{eng}.handoff.json#sha256={hashlib.sha256(raw).hexdigest()}")
+    audit.close()
+
+
+@pytest.mark.parametrize("provenance", [
+    f"ptaas-phantomcorp@{IMG} repo@1234abc", "ptaas-phantomcorp@desconocido repo@desconocido"])
+def test_main_lab_registra_la_procedencia_antes_de_validar(tmp_path, monkeypatch, provenance):
+    eng = "demo-integrador-20261120-161146"
+    inbox, state = tmp_path / "out", tmp_path / "state"
+    _lab_handoff(inbox, eng)
+    monkeypatch.setattr(validation, "default_docker_runner", validation.SimDocker())
+    monkeypatch.setattr(validation, "lab_network_ok", lambda r: True)
+    monkeypatch.setattr(validation, "sandbox_image", lambda r: validation.SIM_IMAGE)
+    monkeypatch.setattr(validation, "lab_resolver",
+                        lambda r: (lambda h: ["10.99.0.12"] if h == "phantomcorp.lab.test" else []))
+    monkeypatch.setattr(validation, "target_provenance", lambda r: provenance)
+    assert validation.main(["--lab", "--engagement", eng, "--inbox", str(inbox), "--state",
+                            str(state), "--approve-phase", "--reviewer", "santiago"]) == 0
+    with sqlite3.connect(state / f"{eng}.sqlite3") as con:
+        rows = list(con.execute("SELECT action, target, result FROM audit ORDER BY seq"))
+    actions = [a for a, _, _ in rows]
+    assert ("target.provenance", provenance, "OK") in rows
+    # Justo después de registrar la imagen del sandbox y antes de cualquier envío.
+    assert actions[actions.index("sandbox.image") + 1] == "target.provenance"
+    assert "poc_catalog.run_parametrized" not in actions[:actions.index("target.provenance")]
