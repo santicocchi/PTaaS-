@@ -15,7 +15,7 @@
 - [x] 2.7 Aprobación HITL con `subject` en `Guard` y `Harness.invoke` (D2)
 - [ ] 2.8 `ApprovalStore` append-only, vencimiento y timeout del Reviewer (D5)
 - [ ] 2.9 Evidencia redactada con hash en bitácora (D7)
-- [ ] 2.10 `proposed_by` y evaluador conocido en el catálogo (D10)
+- [x] 2.10 `proposed_by` y evaluador conocido en el catálogo (D10)
 
 ## Verificación
 - [ ] 3.1 Test: sin aprobación no se invoca el `Sender`

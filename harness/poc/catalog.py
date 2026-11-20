@@ -7,6 +7,7 @@ lo que permite probarla offline con fixtures.
 """
 from __future__ import annotations
 
+import dataclasses
 import re
 import secrets
 from collections.abc import Callable
@@ -18,7 +19,7 @@ import yaml
 
 _CATALOG = Path(__file__).resolve().parent / "catalog.yaml"
 _REQUIRED = {"id", "version", "title", "cwe", "kind", "method", "parameters",
-             "evaluator", "lab_only", "approved_by", "approved_at"}
+             "evaluator", "lab_only", "proposed_by", "approved_by", "approved_at"}
 
 
 class NotInCatalog(Exception): ...
@@ -50,6 +51,15 @@ def load_catalog(path: Path = _CATALOG) -> dict[str, dict[str, Any]]:
     return validate_entries(data["entries"])
 
 
+def catalog_version(path: Path = _CATALOG) -> str:
+    """Versión del catálogo: sube con cada entrada nueva o cambiada (006, D10)."""
+    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
+    version = data.get("catalog_version")
+    if not isinstance(version, str) or not version:
+        raise InvalidCatalog("catalog_version ausente")
+    return version
+
+
 def validate_entries(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for e in entries:
@@ -62,6 +72,11 @@ def validate_entries(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
             raise InvalidCatalog(f"{e['id']}: debe ser lab_only")
         if not e["approved_by"] or not e["approved_at"]:
             raise InvalidCatalog(f"{e['id']}: sin aprobación registrada")
+        proposer = str(e["proposed_by"] or "").strip().lower()
+        if not proposer or proposer == str(e["approved_by"]).strip().lower():
+            raise InvalidCatalog(f"{e['id']}: nadie aprueba su propia verificación")
+        if e["evaluator"] not in EVALUATORS:          # un evaluador nuevo es código (D10)
+            raise InvalidCatalog(f"{e['id']}: evaluador desconocido {e['evaluator']!r}")
         if e["id"] in out:
             raise InvalidCatalog(f"id duplicado: {e['id']}")
         out[e["id"]] = e
@@ -156,6 +171,10 @@ def run_parametrized(catalog: dict[str, dict[str, Any]], poc_id: str, params: di
     if entry["evaluator"] == "input_reflected_unencoded":
         send_params["canary"] = new_canary()
     response = sender(poc_id, send_params)
+    if "canary" in send_params:
+        # Se evalúa con el canario de ESTE intento, diga lo que diga la respuesta: un reflejo
+        # de una corrida anterior no es un positivo (006, D9).
+        response = dataclasses.replace(response, canary=send_params["canary"])
     vulnerable, detail = EVALUATORS[entry["evaluator"]](response)
     return Evidence(poc_id, entry["version"], "validated" if vulnerable else "not_validated",
                     detail, params)
