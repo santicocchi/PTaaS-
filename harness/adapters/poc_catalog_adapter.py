@@ -77,6 +77,9 @@ class PocCatalogRun:
             record, request = bound.last.record, bound.last.request
             sandbox_id, truncated = bound.last.sandbox_id, bound.last.truncated
             result, detail = evidence.status, evidence.detail
+            if truncated and result == "validated":   # superar un límite nunca da positivo
+                result = "not_validated"
+                detail = f"{detail}; respuesta truncada: no cuenta como positivo"
         except SandboxFailure as exc:
             error, cleanup_failed = exc.kind, isinstance(exc, SandboxCleanupFailed)
             request, sandbox_id = exc.request, exc.sandbox_id

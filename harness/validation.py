@@ -33,6 +33,7 @@ from harness.approvals import (
     load_review_limits,
 )
 from harness.contracts import (
+    TOOL_ERROR_REASONS,
     Action,
     AuditIntegrityError,
     Harness,
@@ -77,6 +78,14 @@ class ValidationResult:
 
 class _Stop(Exception):
     """Detiene el loop para todo el engagement."""
+
+
+class _Blocked(Exception):
+    """El Guard bloqueó el envío por un motivo no fatal (alcance, exclusión, DNS)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class ValidationLoop:
@@ -156,7 +165,10 @@ class ValidationLoop:
             # Sin aprobación vigente (o para otra versión de la solicitud, o sin su control en
             # la bitácora) se invoca igual: el Harness registra PENDING_HITL y el adaptador no
             # corre, porque la aprobación no está cargada en el Guard.
-            self._invoke(fid, item.host, None)
+            try:
+                self._invoke(fid, item.host, None)
+            except _Blocked as exc:                # M6: el motivo real, no "pendiente"
+                return FindingOutcome(fid, "not_validated", exc.reason, poc_id)
             return FindingOutcome(fid, "pending_hitl", "falta aprobación del Reviewer", poc_id)
         return self._validate(item)
 
@@ -210,7 +222,11 @@ class ValidationLoop:
                                                             outcome.sandbox_ids)
                 return closed                      # run() detiene el loop con este motivo
             done += 1
-            out = self._invoke(fid, host, PocRequest(fid, done, poc_id, params))
+            try:
+                out = self._invoke(fid, host, PocRequest(fid, done, poc_id, params))
+            except _Blocked as exc:                # M6: no se envió; queda con el motivo real
+                outcome.status, outcome.reason = "not_validated", exc.reason
+                return outcome
             if out is None or out.get("status") == "PENDING_HITL":
                 outcome.status, outcome.reason = "pending_hitl", "falta aprobación del Reviewer"
                 return outcome
@@ -223,9 +239,11 @@ class ValidationLoop:
             status = out.get("status")
             if status == "error":
                 error = str(out.get("error"))
-                if error in ("sandbox_error", "timeout"):
-                    self._control(ATTEMPT_ACTION, fid, Result.ABORTED, error,
-                                  ref if isinstance(ref, str) else None)
+                # M8: todo error cuenta como intento en la bitácora, también un adapter_error
+                # después de enviar (por ejemplo, la evidencia no se pudo escribir).
+                reason = error if error in TOOL_ERROR_REASONS else "adapter_error"
+                self._control(ATTEMPT_ACTION, fid, Result.ABORTED, reason,
+                              ref if isinstance(ref, str) else None)
                 if out.get("cleanup_failed"):
                     self._control(CLEANUP_FAILED_ACTION, str(sandbox_id or host),
                                   Result.ABORTED, "sandbox_error")
@@ -286,7 +304,7 @@ class ValidationLoop:
         except ScopeViolation as exc:
             if exc.reason in _FATAL:
                 raise _Stop(f"abortado: {exc.reason}") from exc
-            return None
+            raise _Blocked(str(exc.reason)) from exc
         finally:
             if request is not None:
                 guard.withdraw(CAPABILITY, host, engagement_id=self.token.engagement_id,

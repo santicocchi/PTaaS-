@@ -559,3 +559,58 @@ def test_aprobacion_con_hash_de_otra_solicitud_no_envia(tmp_path):
                              evidence=decision_ref(ENG, d), subject=fid)   # ...y "auditada"
     res = lab.run()
     assert res.outcomes[fid].status == "pending_hitl" and lab.docker.runs() == []
+
+
+# --- revisión M6: un bloqueo no fatal del Guard termina como no validado, con su motivo ------
+@pytest.mark.parametrize("approved", [True, False])
+def test_bloqueo_del_guard_no_es_pendiente(tmp_path, approved):
+    lab = Lab(tmp_path)
+    lab.harness.resolver = lambda h: ["203.0.113.5"]          # DNS envenenado: fuera de alcance
+    fid = lab.finding("F-1")
+    if approved:
+        lab.approve(fid)
+    res = lab.run()
+    out = res.outcomes[fid]
+    assert (out.status, out.reason) == ("not_validated", "dns_out_of_scope")
+    assert lab.docker.runs() == []
+    assert any(e["result"] == "BLOCKED" and e["reason"] == "dns_out_of_scope"
+               for e in lab.audit.entries)
+
+
+# --- revisión M7: una respuesta truncada nunca es un positivo ---------------------------------
+def test_truncada_no_valida_aunque_el_evaluador_de_positivo(tmp_path):
+    cookie = (("Set-Cookie", "PHPSESSID=abc; path=/"),)        # sin Secure/HttpOnly/SameSite
+    lab = Lab(tmp_path, docker=FakeDocker(
+        run=lambda r: (0, ok_response(headers=cookie, truncated=True))))
+    fid = lab.finding("F-1", cwe="CWE-614")
+    lab.approve(fid)
+    res = lab.run()
+    assert res.outcomes[fid].status == "not_validated"
+    refs = [e["evidence"] for e in lab.controls("validation.attempt")]
+    docs = [json.loads((tmp_path / r.split("#")[0]).read_text()) for r in refs]
+    assert all(d["truncated"] is True and d["result"] == "not_validated" for d in docs)
+
+
+def test_sin_truncar_el_mismo_caso_valida(tmp_path):
+    cookie = (("Set-Cookie", "PHPSESSID=abc; path=/"),)
+    lab = Lab(tmp_path, docker=FakeDocker(run=lambda r: (0, ok_response(headers=cookie))))
+    fid = lab.finding("F-1", cwe="CWE-614")
+    lab.approve(fid)
+    assert lab.run().outcomes[fid].status == "validated"
+
+
+# --- revisión M8: un adapter_error después de enviar cuenta como intento ----------------------
+def test_adapter_error_despues_de_enviar_queda_como_intento(tmp_path):
+    lab = Lab(tmp_path, docker=FakeDocker(run=escaped))
+    fid = lab.finding("F-1", cwe="CWE-79", url="http://dvwa.lab.test/x?q=1")
+    lab.approve(fid)
+    taken = tmp_path / "evidence" / ENG / f"{fid}-1.json"
+    taken.parent.mkdir(parents=True)
+    taken.write_text("{}")                                    # write_evidence -> FileExistsError
+    lab.run()
+    attempts = lab.controls("validation.attempt")
+    assert [(e["result"], e.get("reason")) for e in attempts] == [("ABORTED", "adapter_error"),
+                                                                 ("OK", None)]
+    assert attempts[0]["subject"] == fid
+    assert lab.loop._prior_attempts(fid) == 2                 # sobrevive a un reinicio
+    assert len(lab.docker.runs()) == 2
