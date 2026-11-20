@@ -25,3 +25,10 @@ El generador de informes valida campos, pero falta armar el informe real desde l
 - ¿Cómo se versiona un informe si cambia un hallazgo después de generado?
 - ¿Qué información NO debe salir del sistema hacia DefectDojo?
 - ¿Cómo se trata un hallazgo "no validado" de severidad alta?
+
+Las tres anteriores tienen respuesta en `design.md` (D9, D12 y D7). Quedan abiertas, para la revisión del delta (detalle en `design.md`, "Preguntas abiertas"):
+- ¿El puntaje CVSS v4.0 se calcula con una implementación propia de la tabla de FIRST o con la biblioteca `cvss` fijada por versión?
+- ¿Qué versión de DefectDojo se fija, y su Generic Findings Import acepta CVSS v4.0 y EPSS en campos propios?
+- ¿Se agrega una instancia de DefectDojo a `lab/docker-compose.yml` o alcanza con el modo offline y un servidor falso en los tests?
+- ¿Se genera informe de un engagement abortado?
+- ¿Cómo se emite una fe de erratas después de DELIVERED?

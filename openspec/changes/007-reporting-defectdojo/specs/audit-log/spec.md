@@ -1,0 +1,46 @@
+# Delta — audit-log (change 007)
+
+Tests: tests/audit_log/test_report_records.py
+
+## ADDED Requirement: Registros del informe
+La bitácora DEBE aceptar estos registros de control, todos con `subject`:
+- `report.generated`: resultado OK, evidencia `reports/<engagement>/report-v<N>.json#sha256=<hex>` y `subject` `report-v<N>`;
+- `report.generation_failed`: resultado ABORTED, `subject` = `finding_id` o `report_id`, y motivo del conjunto cerrado `missing_cwe`, `invalid_cvss_vector`, `missing_remediation`, `evidence_mismatch`, `validation_mismatch`, `sensitive_data`, `not_lab_target`, `engagement_not_in_report`, `engagement_delivered`;
+- `hitl.approve_delivery` y `hitl.reject_delivery`: resultado OK, agente `reviewer:<nombre>`, evidencia = referencia hasheada de la fila del registro con su número y `subject` = `report_id`;
+- `report.delivery`: resultado PENDING_HITL (sin aprobación) o ABORTED (kill switch), con `subject` = `report_id`;
+- `report.delivered`: resultado OK, evidencia del archivo exportado o del resumen del envío, y `subject` = `report_id`.
+
+Un motivo fuera de esos conjuntos, o un `report.generated` o `report.delivered` sin evidencia, DEBE rechazarse al escribir. Los registros del informe NO DEBEN contener el contenido del informe, la clave de DefectDojo ni valores redactados.
+
+### Scenario: informe generado
+- GIVEN un `report-v1` escrito
+- WHEN se registra
+- THEN hay un `report.generated` OK con la referencia del archivo, `subject` `report-v1` y la cadena verifica
+
+### Scenario: motivo de fallo inventado
+- GIVEN un `report.generation_failed` con motivo `campo_raro`
+- WHEN se intenta escribir
+- THEN se rechaza
+
+### Scenario: informe generado sin evidencia
+- GIVEN un `report.generated` sin referencia de evidencia
+- WHEN se intenta escribir
+- THEN se rechaza
+
+### Scenario: fallo por dato sensible
+- GIVEN un informe que falla con `sensitive_data` por un correo
+- WHEN se registra el fallo
+- THEN el registro tiene motivo `sensitive_data` y ningún campo del registro contiene el correo
+
+## ADDED Requirement: La bitácora define la decisión de entrega vigente
+La decisión vigente de entrega de un informe DEBE salir del control `hitl.*_delivery` más nuevo de la bitácora para ese `report_id`, y DEBE corresponder a una única fila del registro de aprobaciones. Un control `hitl.approve` o `hitl.reject` de un hallazgo NO DEBE contar como decisión de entrega, y una decisión de entrega NO DEBE contar como decisión de validación.
+
+### Scenario: control de validación con sujeto de informe
+- GIVEN un `hitl.approve` (de validación) con `subject` `report-v1`
+- WHEN se busca la decisión de entrega de `report-v1`
+- THEN no hay ninguna
+
+### Scenario: fila copiada después de un rechazo
+- GIVEN una aprobación de entrega, un rechazo posterior y una copia de la fila aprobada insertada al final del registro
+- WHEN se busca la decisión vigente
+- THEN es el rechazo

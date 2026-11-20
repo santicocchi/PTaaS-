@@ -100,8 +100,8 @@ python -m demo.pipeline                                                    # sim
 docker compose -f lab/docker-compose.yml exec runner python -m demo.pipeline --lab
 ```
 
-Usa `demo/roe-pipeline.yaml`, que autoriza recon, correlate y analyze (el RoE del Checkpoint 1
-no autoriza analyze, y eso es lo que muestra su paso 3). Un mismo engagement, un token por fase:
+Usa `demo/roe-pipeline.yaml`, que autoriza recon, correlate, analyze y validate (el RoE del
+Checkpoint 1 no autoriza analyze, y eso es lo que muestra su paso 3). Un mismo engagement, un token por fase:
 
 1. **Relevamiento:** el loop A de arriba.
 2. **Correlación:** las versiones del grafo contra los snapshots de `data/feeds/`, sin internet.
@@ -123,3 +123,81 @@ Corrida en el laboratorio (19/11/2026, templates habilitados en una copia tempor
 2.4.25 (Debian) → CVE-2099-0001 y -0002 inconclusos con confianza baja (solo versión);
 CWE-693 (falta CSP), CWE-497 (versión en `Server`) y CWE-1004 (cookie sin HttpOnly) confirmados
 por evidencia de confianza alta de nuclei o ZAP; sin contradicciones. 12 registros en la bitácora, cadena íntegra.
+
+# Loop C: validación por hallazgo en el sandbox (change 006)
+
+El loop C toma lo que dejó el pipeline y, **por cada hallazgo que apruebe el Reviewer**, corre
+una verificación del catálogo (`harness/poc/catalog.yaml`) en un contenedor efímero. No se
+genera nada nuevo: solo se parametrizan verificaciones aprobadas (GET o HEAD a una IP del
+laboratorio, sin payloads).
+
+Corre **en el host del laboratorio**, que es el que tiene docker. El runner no tiene el socket
+de docker a propósito (design.md del 006, D3). Hace falta la imagen del sandbox:
+
+```bash
+docker compose -f lab/docker-compose.yml --profile build build sandbox
+```
+
+El recorrido tiene cuatro pasos. El 2 y el 3 los hace el Reviewer:
+
+```bash
+# 1. Pipeline: deja demo/out/<engagement>.handoff.json y su SHA-256 en la bitácora
+docker compose -f lab/docker-compose.yml exec runner python -m demo.pipeline --lab
+
+# 2. El Reviewer abre la fase de validación (gate before_validate). La entrega se verifica y
+#    se importa a demo/state/, y se arma la cola del Reviewer. No se envía nada.
+python -m demo.validation --lab --engagement <engagement> --approve-phase --reviewer <tu-usuario>
+
+# 3. El Reviewer mira la solicitud (host, verificación, parámetros) y aprueba UNA.
+#    La demo imprime el comando exacto, con el hash de la solicitud:
+python -m harness.review --engagement <engagement> --state-dir demo/state \
+    --audit-dir demo/state approve <finding_id> --request <hash> --reviewer <tu-usuario> \
+    --reason "<por qué>"
+
+# 4. Se envía solo lo aprobado, en el sandbox, y queda la evidencia
+python -m demo.validation --lab --engagement <engagement>
+```
+
+Sin `--lab` es la simulación: el mismo loop, con `docker` simulado (no se ejecuta nada) y la
+respuesta del DVWA grabada. Sirve para ensayar el guion. Una entrega de simulación no se
+puede validar con `--lab`, ni al revés.
+
+**Por qué `demo/state/` y no `demo/out/`.** El runner procesa respuestas de los objetivos, que
+son datos hostiles, y puede escribir `demo/out` entero: la entrega, su bitácora y cualquier
+registro. Si las aprobaciones vivieran ahí, desde el runner se podría correr
+`harness.review` y aprobar sin el Reviewer. Por eso `demo/out` es solo la bandeja de entrada.
+El loop C importa la entrega una vez a `demo/state/`, que en el runner es de solo lectura (el
+repo se monta `:ro`). Desde ahí trabajan la bitácora del loop C, las aprobaciones, las
+observaciones y la evidencia. Una aprobación escrita en `demo/out` no cuenta.
+
+**Qué se verifica al importar la entrega:**
+- la cadena de la bitácora de `demo/out`;
+- un solo `handoff.written`, del orquestador, con el SHA-256 del archivo;
+- que el modo (sim o lab) sea el de la corrida;
+- que el RoE sea exactamente `demo/roe-pipeline.yaml`, salvo `engagement_id`, la ventana (que no
+  puede pasar de 8 horas) y el hash de aprobación. El runner no puede tocar esa plantilla, así
+  que no se puede quitar una exclusión ni agrandar el alcance editando la entrega, aunque se
+  recalculen todos los hashes.
+
+Si algo falla, queda `handoff.rejected` en la bitácora del host y no se envía nada.
+
+Qué mirar en cada paso:
+
+- **Paso 2:** en la bitácora del host quedan `handoff.imported` y `gate.approve` (con el
+  Reviewer). CWE-693 (falta CSP) y CWE-1021 (clickjacking) quedan en `pending_hitl` con su
+  verificación (POC-CSP-001 y POC-HDR-001), con un `PENDING_HITL` en la bitácora cada uno y
+  ningún contenedor. Los CVE y los CWE sin verificación en el catálogo se cierran con
+  `no_catalog_entry`, sin enviar nada.
+- **Paso 3:** la aprobación queda en el registro de aprobaciones y en la bitácora
+  (`hitl.approve`, con el hallazgo como `subject`). Vence a los 60 minutos. Si la solicitud
+  cambia, el hash ya no coincide y hay que aprobar de nuevo.
+- **Paso 4:** el aprobado pasa a `validated`; el otro sigue en `pending_hitl`, porque la
+  aprobación es por hallazgo y no por host. La evidencia (redactada: sin cookies ni
+  `Authorization`) queda en `demo/state/` y en la bitácora con su SHA-256: la demo la verifica.
+  La imagen que corrió queda como `sandbox.image`. `docker ps -a --filter label=ptaas.sandbox`
+  no muestra nada: el contenedor se destruye siempre.
+
+Riesgo aceptado (design.md del 006): el Reviewer es quien tenga acceso al host del
+laboratorio; la CLI no lo compara con el aprobador del RoE.
+
+Corrida en el laboratorio (20/11/2026, nube): ver el PR de esta demo.
