@@ -153,8 +153,10 @@ class BoundSender:
     def __init__(self, sandbox: DockerSandbox, address: str) -> None:
         self.sandbox, self.address = sandbox, address
         self.last: SandboxResponse | None = None
+        self.last_params: dict[str, str] = {}       # con el canario de este intento
 
     def __call__(self, poc_id: str, params: dict[str, str]) -> ResponseRecord:
+        self.last, self.last_params = None, dict(params)
         self.last = self.sandbox.send(poc_id, params, self.address)
         return self.last.record
 
