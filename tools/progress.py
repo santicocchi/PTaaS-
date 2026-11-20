@@ -14,9 +14,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OPENSPEC = ROOT / "openspec"
-TASK_RE = re.compile(r"^\s*- \[( |x|X)\]", re.M)
-SCENARIO_RE = re.compile(r"^### Scenario:", re.M)
-TESTS_LINE_RE = re.compile(r"^Tests?:\s*(.+)$", re.M)
+TASK_RE = re.compile(r"^\s*- \[( |x|X)\]", re.MULTILINE)
+SCENARIO_RE = re.compile(r"^### Scenario:", re.MULTILINE)
+TESTS_LINE_RE = re.compile(r"^Tests?:\s*(.+)$", re.MULTILINE)
 
 
 def changes_progress() -> list[tuple[str, int, int]]:
@@ -40,10 +40,10 @@ def specs_summary() -> list[tuple[str, int, list[str]]]:
 def count_tests() -> int | None:
     try:
         out = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
-                             cwd=ROOT, capture_output=True, text=True, timeout=120).stdout
+                             cwd=ROOT, capture_output=True, text=True, timeout=120, check=False).stdout
     except (OSError, subprocess.TimeoutExpired):
         return None
-    m = re.search(r"(\d+) tests? collected", out) or re.search(r"^(\d+)/\d+ tests collected", out, re.M)
+    m = re.search(r"(\d+) tests? collected", out) or re.search(r"^(\d+)/\d+ tests collected", out, re.MULTILINE)
     return int(m.group(1)) if m else sum(1 for ln in out.splitlines() if "::" in ln)
 
 

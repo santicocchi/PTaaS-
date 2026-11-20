@@ -12,6 +12,7 @@ import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -41,16 +42,16 @@ class Evidence:
     poc_version: str
     status: str                   # "validated" | "not_validated"
     detail: str
-    parameters: dict = field(default_factory=dict)
+    parameters: dict[str, Any] = field(default_factory=dict)
 
 
-def load_catalog(path: Path = _CATALOG) -> dict[str, dict]:
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+def load_catalog(path: Path = _CATALOG) -> dict[str, dict[str, Any]]:
+    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
     return validate_entries(data["entries"])
 
 
-def validate_entries(entries: list[dict]) -> dict[str, dict]:
-    out: dict[str, dict] = {}
+def validate_entries(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
     for e in entries:
         missing = _REQUIRED - e.keys()
         if missing:
@@ -135,10 +136,10 @@ def new_canary() -> str:
 
 # ---- Ejecución parametrizada ---------------------------------------------------
 
-Sender = Callable[[str, dict], ResponseRecord]   # lo provee el sandbox (fuera del kit)
+Sender = Callable[[str, dict[str, str]], ResponseRecord]   # lo provee el sandbox (fuera del kit)
 
 
-def run_parametrized(catalog: dict[str, dict], poc_id: str, params: dict,
+def run_parametrized(catalog: dict[str, dict[str, Any]], poc_id: str, params: dict[str, str],
                      approved: bool, sender: Sender) -> Evidence:
     entry = catalog.get(poc_id)
     if entry is None:

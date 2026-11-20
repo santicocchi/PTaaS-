@@ -77,7 +77,7 @@ class ToolAdapter(Protocol):
     destructive: bool
 
     def run(self, action: Action, target: str, token: ScopeToken,
-            addresses: tuple[str, ...]) -> dict:
+            addresses: tuple[str, ...]) -> dict[str, Any]:
         """Debe devolver JSON parseable. Nunca ejecuta fuera de `target`.
 
         `addresses` son las IP que validó el Harness. Un adaptador que se conecta al objetivo
@@ -395,7 +395,8 @@ class Harness:
         self.audit.record_kill(engagement_id, agent)
         self.killswitch.engage(engagement_id)
 
-    def invoke(self, agent: str, action: Action, target: str, token: ScopeToken) -> dict:
+    def invoke(self, agent: str, action: Action, target: str,
+               token: ScopeToken) -> dict[str, Any]:
         try:
             self.audit.verify_integrity()       # con la cadena rota no se actúa
         except AuditIntegrityError:

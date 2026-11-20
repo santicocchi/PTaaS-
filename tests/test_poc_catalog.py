@@ -1,9 +1,16 @@
 """Scenarios de `validation`: solo catálogo, gate humano, parámetros acotados."""
 import pytest
 
-from harness.poc.catalog import (ApprovalRequired, InvalidCatalog, NotInCatalog,
-                                 ParameterError, ResponseRecord, load_catalog,
-                                 run_parametrized, validate_entries)
+from harness.poc.catalog import (
+    ApprovalRequired,
+    InvalidCatalog,
+    NotInCatalog,
+    ParameterError,
+    ResponseRecord,
+    load_catalog,
+    run_parametrized,
+    validate_entries,
+)
 
 BASE = {"base_url": "http://dvwa.lab.test", "path": "/"}
 

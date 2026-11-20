@@ -1,11 +1,19 @@
 import pytest
 
-from harness.adapters.common import (ForbiddenArgument, InvalidTarget, load_profiles,
-                                     reject_forbidden, validate_target, validate_url)
-from harness.adapters.nmap_adapter import NmapServiceScan, build_argv as nmap_argv
-from harness.adapters.nuclei_adapter import NucleiSafeTemplates, build_argv as nuclei_argv
-from tests.conftest import act, make_token
+from harness.adapters.common import (
+    ForbiddenArgument,
+    InvalidTarget,
+    load_profiles,
+    reject_forbidden,
+    validate_target,
+    validate_url,
+)
+from harness.adapters.nmap_adapter import NmapServiceScan
+from harness.adapters.nmap_adapter import build_argv as nmap_argv
+from harness.adapters.nuclei_adapter import NucleiSafeTemplates
+from harness.adapters.nuclei_adapter import build_argv as nuclei_argv
 from harness.contracts import Phase
+from tests.conftest import act, make_token
 
 MALOS = ["; rm -rf /", "10.0.0.5 -A", "-iL /etc/hosts", "host name", "http://x", "$(id)", ""]
 

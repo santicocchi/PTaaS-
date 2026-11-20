@@ -18,7 +18,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from evals.rubric import score  # noqa: E402
+from evals.rubric import score
 
 PROMPT_FILES = {
     "orchestrator": "00-orchestrator.md", "correlation": "03-correlation.md",

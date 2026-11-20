@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 CVSS4_RE = re.compile(
     r"^CVSS:4\.0/AV:[NALP]/AC:[LH]/AT:[NP]/PR:[NLH]/UI:[NPA]"
@@ -36,7 +37,7 @@ def _check(f: Finding) -> None:
         raise MissingField(f"{f.id}: falta remediación")
 
 
-def render_report(engagement_id: str, findings: list[Finding]) -> dict:
+def render_report(engagement_id: str, findings: list[Finding]) -> dict[str, Any]:
     for f in findings:
         _check(f)
     lines = [f"# Informe de pentest — {engagement_id}", ""]
@@ -48,7 +49,7 @@ def render_report(engagement_id: str, findings: list[Finding]) -> dict:
             "findings": [f.id for f in findings], "delivered": False}
 
 
-def deliver(report: dict, reviewer_approved: bool) -> dict:
+def deliver(report: dict[str, Any], reviewer_approved: bool) -> dict[str, Any]:
     if not reviewer_approved:
         raise DeliveryNotApproved("la entrega requiere aprobación del Reviewer")
     return {**report, "delivered": True}

@@ -91,7 +91,7 @@ def test_capability_sin_adaptador_se_bloquea(env, token, monkeypatch):
 
 
 def test_adaptador_no_habilitado_en_la_fase_se_bloquea(env, token):
-    h, guard, _, _, adapters = env
+    h, guard, *_ = env
     guard.phase_allowlist[Phase.RECON].add("zap.baseline_scan")
     with pytest.raises(ScopeViolation):
         h.invoke("recon", act("zap.baseline_scan", Phase.RECON), "10.0.0.5", token)

@@ -7,6 +7,7 @@ import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -33,8 +34,9 @@ class ToolFailure(Exception):
         self.kind = kind
 
 
-def load_profiles(path: Path = _PROFILES) -> dict:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+def load_profiles(path: Path = _PROFILES) -> dict[str, Any]:
+    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return data
 
 
 def validate_target(target: str, allow_cidr: bool = False) -> str:
