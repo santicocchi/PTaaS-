@@ -22,6 +22,6 @@
 - [x] 3.2 Test: verificación inexistente en catálogo → "no validado"
 - [x] 3.3 Test: el sandbox no alcanza hosts fuera del lab
 - [x] 3.4 Test: el sandbox se destruye aunque falle la verificación
-- [ ] 3.5 Evals de validación ampliadas con casos donde la respuesta correcta es no actuar
+- [x] 3.5 Evals de validación ampliadas con casos donde la respuesta correcta es no actuar
 - [ ] 3.6 `security-reviewer` sobre la implementación
 - [ ] 3.7 Archivar deltas en `openspec/specs/`
