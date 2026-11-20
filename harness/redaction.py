@@ -42,7 +42,8 @@ PATTERNS: tuple[Pattern, ...] = tuple(Pattern(i, re.compile(r)) for i, r in (
     ("url-query", r"\bhttps?://[^\s?#]+[?#]\S*"),
     ("aws-key", r"\bAKIA[0-9A-Z]{16}\b"),
     ("email", r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
-    ("md5-hash", r"(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])"),
+    # La huella de un hallazgo (`fp1-` + 32 hex, 007 D10) no es un MD5.
+    ("md5-hash", r"(?<![0-9a-fA-F])(?<!fp1-)[0-9a-fA-F]{32}(?![0-9a-fA-F])"),
     ("canary", r"ptaas[0-9a-f]{8}"),
     ("lab-default-cred", r"(?i)\badmin\s*[:/]\s*(password|admin123)\b"),
 ))
@@ -84,8 +85,8 @@ class SensitiveData(ValueError):
 
     def __init__(self, matches: list[Match]) -> None:
         self.matches = matches
-        where = ", ".join(f"{m.pattern} en {m.section}" for m in matches[:5])
-        super().__init__(f"sensitive_data: {where}")
+        self.where = ", ".join(f"{m.pattern} en {m.section}" for m in matches[:5])
+        super().__init__(f"sensitive_data: {self.where}")
 
     @classmethod
     def check(cls, doc: Any, section: str = "") -> None:

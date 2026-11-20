@@ -54,7 +54,8 @@ def test_cookie_de_zap_redactada():
 
 
 def test_hashes_de_la_bitacora_intactos():
-    text = f"evidence/eng-1/f-1-1.json#sha256={SHA} y el hash corto 70bcfe921dd5"
+    text = (f"evidence/eng-1/f-1-1.json#sha256={SHA} y el hash corto 70bcfe921dd5, "
+            f"la huella fp1-{'0a' * 16}")
     assert scan(text, "anexo") == []
     assert redact(text) == text
 
@@ -73,3 +74,33 @@ def test_check_recorre_estructuras():
     with pytest.raises(SensitiveData) as exc:
         SensitiveData.check(doc)
     assert exc.value.matches[0].section == "a[1].c"
+
+
+# --- en el informe ---------------------------------------------------------------------------
+def test_cookie_de_zap_no_llega_al_informe(tmp_path):
+    from tests.reporting.helpers import Lab
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.observe("dvwa.lab.test", "CWE-693", "http://dvwa.lab.test/?id=7",
+                "Set-Cookie: PHPSESSID=abc123; HttpOnly")
+    rep = lab.generate()
+    for raw in (rep.path.read_text(), rep.markdown_path.read_text()):
+        assert "abc123" not in raw and "id=7" not in raw and "[redacted:" in raw
+
+
+def test_dato_sensible_que_no_paso_por_la_redaccion(tmp_path):
+    """El escaneo final es la red de seguridad: un campo que no se redacta igual se controla."""
+    import json
+
+    from harness.reporting import ReportError, build
+    from tests.reporting.helpers import Lab
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.generate()
+    inputs = json.loads((lab.reports_dir() / "inputs-v1.json").read_bytes())
+    inputs["inputs_ref"] = "reports/eng-1/inputs-v1.json#sha256=" + "0" * 64
+    inputs["roe"]["exclusions"] = ["admin@juice-sh.op"]
+    with pytest.raises(ReportError) as exc:
+        build(inputs, lab.audit.entries, lab.state_dir)
+    assert exc.value.reason == "sensitive_data"
+    assert "email" in str(exc.value) and "juice-sh" not in str(exc.value)

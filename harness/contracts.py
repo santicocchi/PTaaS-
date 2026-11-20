@@ -105,6 +105,16 @@ VALIDATION_CLOSED_ACTION = "validation.closed"
 VALIDATION_CLOSE_REASONS = frozenset({"no_catalog_entry", "reviewer_rejected",
                                       "reviewer_timeout", "request_budget_exhausted"})
 
+# 007: registros del informe. Todos llevan `subject` (el report_id o el finding_id).
+REPORT_GENERATED_ACTION = "report.generated"
+REPORT_FAILED_ACTION = "report.generation_failed"
+REPORT_DELIVERY_ACTION = "report.delivery"
+REPORT_DELIVERED_ACTION = "report.delivered"
+REPORT_FAILURE_REASONS = frozenset({
+    "missing_cwe", "invalid_cvss_vector", "missing_remediation", "evidence_mismatch",
+    "validation_mismatch", "sensitive_data", "not_lab_target", "engagement_not_in_report",
+    "engagement_delivered"})
+
 Resolver = Callable[[str], list[str]]
 
 
@@ -271,6 +281,21 @@ def entry_hash(entry: Entry) -> str:
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 
+def _check_report_record(action: str, result: Result, reason: str | None,
+                         evidence: str | None, subject: str | None) -> None:
+    """Forma de los registros del informe (007, delta de audit-log)."""
+    if subject is None:
+        raise ValueError(f"{action} necesita subject")
+    if action == REPORT_FAILED_ACTION:
+        if result is not Result.ABORTED or reason not in REPORT_FAILURE_REASONS:
+            raise ValueError(f"fallo de informe inválido: {result.value} {reason!r}")
+    elif action in (REPORT_GENERATED_ACTION, REPORT_DELIVERED_ACTION):
+        if result is not Result.OK or evidence is None or reason is not None:
+            raise ValueError(f"{action} va OK, con evidencia y sin motivo")
+    elif result not in (Result.PENDING_HITL, Result.ABORTED) or reason is not None:
+        raise ValueError(f"{action} va PENDING_HITL o ABORTED, sin motivo")
+
+
 def make_entry(*, prev: str, engagement: str, agent: str, action: str, target: str,
                phase: str, result: Result, reason: str | None = None,
                evidence: str | None = None, subject: str | None = None) -> Entry:
@@ -280,7 +305,12 @@ def make_entry(*, prev: str, engagement: str, agent: str, action: str, target: s
         "action": action, "target": target, "phase": phase,
         "result": result.value, "prev": prev,
     }
-    if action == VALIDATION_CLOSED_ACTION:
+    if action in (REPORT_GENERATED_ACTION, REPORT_FAILED_ACTION, REPORT_DELIVERY_ACTION,
+                  REPORT_DELIVERED_ACTION):
+        _check_report_record(action, result, reason, evidence, subject)
+    if action == REPORT_FAILED_ACTION:
+        body["reason"] = reason
+    elif action == VALIDATION_CLOSED_ACTION:
         if result is not Result.ABORTED or reason not in VALIDATION_CLOSE_REASONS:
             raise ValueError(f"cierre de validación inválido: {result.value} {reason!r}")
         body["reason"] = reason
