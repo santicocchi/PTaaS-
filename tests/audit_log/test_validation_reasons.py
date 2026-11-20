@@ -121,3 +121,9 @@ def test_subject_persistido_en_sqlite_y_bitacora_vieja(tmp_path):
     assert log.entries[-1]["subject"] == "F-1" and "subject" not in log.entries[0]
     log.close()
     assert audit_mod.verify_file(path) is None
+
+
+def test_referencia_de_evidencia_con_salto_final_se_rechaza():
+    with pytest.raises(ValueError):
+        AuditLog().record_control("eng-1", "v", "validation.attempt", "F-1", Result.OK,
+                                  evidence="evidence/x.json#sha256=" + "a" * 64 + "\n")

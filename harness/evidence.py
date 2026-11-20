@@ -27,7 +27,7 @@ REDACTED_HEADERS = frozenset({"authorization", "cookie", "set-cookie"})
 REDACTED = "[redacted]"
 EXCERPT_BYTES = 512
 RESULTS = frozenset({"validated", "not_validated", "failed"})
-_ENGAGEMENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+_ENGAGEMENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}\Z")
 _CONTEXT_CHARS = 200
 
 

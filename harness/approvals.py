@@ -30,8 +30,8 @@ from harness.policy_loader import load_policy
 DECISIONS = ("approved", "rejected")
 OUTCOMES = ("validated", "not_validated", "failed")
 CONTROLS = {"approved": "hitl.approve", "rejected": "hitl.reject"}
-REVIEWER_RE = re.compile(r"^[\w.@-]{1,64}$")
-_ENGAGEMENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+REVIEWER_RE = re.compile(r"^[\w.@-]{1,64}\Z")
+_ENGAGEMENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}\Z")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS queue (

@@ -92,6 +92,7 @@ BLOCK_REASONS = frozenset({
     "token_revoked", "excluded", "roe_invalid", "roe_tampered", "phase_not_in_roe",
     "outside_window", "dns_out_of_scope", "dns_unresolved",
     "missing_subject",                    # 006: acción con gate humano sin `subject`
+    "invalid_subject",                    # 006: `subject` que no es un finding_id válido
 })
 
 # Motivos de un registro no BLOCKED: solo errores de herramienta (change 004).
@@ -144,7 +145,7 @@ def normalize_target(target: str) -> str | None:
 
 
 # 006: el sujeto de una aprobación es un `finding_id` (también nombra archivos de evidencia).
-SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 ApprovalKey = tuple[str, Phase, str, str, str]   # (engagement, fase, acción, objetivo, sujeto)
 
 
@@ -256,7 +257,7 @@ class Guard:
 
 
 Entry = dict[str, Any]
-EVIDENCE_RE = re.compile(r"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*#sha256=[0-9a-f]{64}$")
+EVIDENCE_RE = re.compile(r"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*#sha256=[0-9a-f]{64}\Z")
 KILLSWITCH_ACTION = "killswitch.engage"
 
 
@@ -443,6 +444,12 @@ class Harness:
     def invoke(self, agent: str, action: Action, target: str, token: ScopeToken,
                subject: str | None = None) -> dict[str, Any]:
         """`subject` es el hallazgo al que se ata el gate humano (006, D2)."""
+        # Antes que nada: un subject malformado haría fallar la escritura de cualquier
+        # registro posterior (la bitácora lo valida) y la denegación no quedaría en bitácora.
+        if subject is not None and (not isinstance(subject, str)
+                                    or not SUBJECT_RE.match(subject)):
+            self.audit.record(agent, action, target, token, Result.BLOCKED, "invalid_subject")
+            raise ScopeViolation(f"{action.name}: sujeto inválido", "invalid_subject")
         try:
             self.audit.verify_integrity()       # con la cadena rota no se actúa
         except AuditIntegrityError:

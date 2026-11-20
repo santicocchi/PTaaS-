@@ -18,7 +18,7 @@ from typing import Any
 
 LAB_NETWORK = ipaddress.ip_network("10.99.0.0/24")      # lab/docker-compose.yml, red `lab`
 _FIELDS = {"method", "path", "host", "ip", "port", "timeout_s", "max_bytes"}
-_HOST_RE = re.compile(r"^[a-z0-9.-]{1,253}(:\d{1,5})?$")
+_HOST_RE = re.compile(r"^[a-z0-9.-]{1,253}(:\d{1,5})?\Z")
 _MAX_BYTES = 1024 * 1024
 
 

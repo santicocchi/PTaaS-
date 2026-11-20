@@ -92,3 +92,24 @@ def test_missing_subject_sin_subject_en_el_registro(env):
     with pytest.raises(ScopeViolation):
         h.invoke("validation", _action(), "dvwa.lab.test", _token())
     assert audit.entries[-1]["reason"] == "missing_subject" and "subject" not in audit.entries[-1]
+
+
+# --- subject malformado: se bloquea y queda en bitácora antes de todo lo demás ---------------
+@pytest.mark.parametrize("subject", ["F-1\nX", "F-1\n", "x" * 500, "", "a/../b", "F 1"])
+@pytest.mark.parametrize("phase", ["validate", "recon", "killed"])
+def test_subject_malformado(env, token, subject, phase):
+    h, guard, audit, ks, adapters = env
+    _approve(guard, "F-1")
+    if phase == "killed":
+        ks.engage("eng-1")
+    name, tok = ((POC, _token()) if phase != "recon" else ("httpx.probe", token))
+    action = _action() if phase != "recon" else Action(name, Phase.RECON)
+    before = len(audit.entries)
+    with pytest.raises(ScopeViolation) as exc:
+        h.invoke("validation", action, "dvwa.lab.test", tok, subject=subject)
+    assert exc.value.reason == "invalid_subject"
+    new = audit.entries[before:]
+    assert [(e["result"], e["reason"]) for e in new] == [("BLOCKED", "invalid_subject")]
+    assert "subject" not in new[0]
+    assert adapters[name].calls == []
+    audit.verify_integrity()
