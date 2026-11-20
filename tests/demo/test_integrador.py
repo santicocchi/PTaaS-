@@ -190,3 +190,19 @@ def test_main_lab_registra_la_procedencia_antes_de_validar(tmp_path, monkeypatch
     # Justo después de registrar la imagen del sandbox y antes de cualquier envío.
     assert actions[actions.index("sandbox.image") + 1] == "target.provenance"
     assert "poc_catalog.run_parametrized" not in actions[:actions.index("target.provenance")]
+
+
+# --- 3.3: el informe acepta hosts web que son IP (corrida real del integrador) -----------------
+
+def test_informe_con_host_web_ip(tmp_path):
+    """En la corrida real la RoE trae el /32 y el recon devuelve `10.99.0.12` como host web.
+    El informe lo tiene que registrar como `ip`, no como `domain`."""
+    from demo.report import asset_graph
+    from harness.roe import parse_roe
+    eng = "demo-integrador-1"
+    roe = parse_roe(prepare_roe(eng, now(), pipeline.ROE_TEMPLATES["integrador"]))
+    graph, skipped = asset_graph(tmp_path, eng, roe, ["10.99.0.12", "phantomcorp.lab.test"],
+                                 ["http://10.99.0.12/", "http://phantomcorp.lab.test/"])
+    kinds = {(a.type, a.address) for a in graph.assets(in_scope=True)}
+    assert ("ip", "10.99.0.12") in kinds and ("domain", "phantomcorp.lab.test") in kinds
+    assert skipped == []

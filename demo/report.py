@@ -58,6 +58,7 @@ from harness.contracts import (
     KillSwitch,
     KillSwitchEngaged,
     Result,
+    _is_ip,
 )
 from harness.delivery import (
     DeliveryContext,
@@ -131,7 +132,9 @@ def asset_graph(state: Path, eng: str, roe: RoE, web_hosts: list[str],
         if not (isinstance(host, str) and _in_lab(host, lab) and _in_roe(host, scope)):
             skipped.append(str(host))
             continue
-        graph.add("domain", host, source_tool="handoff", iteration=1)
+        # 010: con un /32 en la RoE (integrador) el recon devuelve también la IP como host web.
+        graph.add("ip" if _is_ip(host) else "domain", host, source_tool="handoff",
+                  iteration=1)
         for url in observed_urls:
             parts = urlsplit(url)
             if parts.hostname == host and parts.scheme in ("http", "https"):
