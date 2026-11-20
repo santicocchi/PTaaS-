@@ -49,10 +49,13 @@ Cada hallazgo del informe (todos menos los `discarded`, ver D7) DEBE tener CWE, 
 
 - **Clave:** `CVE-AAAA-N` si el candidato tiene CVE; si no, `CWE-N`. Primero se busca por CVE y después por CWE.
 - **Campos de cada entrada:** `title`, `technical_description`, `business_impact` (lenguaje no técnico, D8), `remediation`, `references` (por ejemplo `WSTG-CONF-07`), `cvss_v4_vector`, `author`, `reviewer`, `date`.
-- **Entrada válida:** `reviewer` no vacío, distinto de `pendiente` y distinto de `author`. Una entrada sin revisar no existe para el builder.
+- **Entrada válida:** `reviewer` no vacío, distinto de `pendiente` y distinto de `author` (sin distinguir mayúsculas, como la lista de falsos positivos); `author`, `reviewer`, `date` y `cvss_v4_vector` son texto (una fecha YAML sin comillas no vale). Una entrada sin revisar no existe para el builder.
 - **CWE:** sale del candidato y DEBE cumplir `^CWE-[1-9][0-9]{0,4}\Z`. `unknown` no es un CWE.
 - **Sin conversión de CVSS.** Un CVE con solo puntaje 3.1 en el feed no se convierte a 4.0 (005 D5). Si la tabla no tiene un vector 4.0 para ese CVE (o para su CWE), el informe no se genera.
 - **Fallo:** si falta algo, no se escribe ningún archivo de informe, se lanza `MissingField` con el `finding_id` y el nombre del campo (`cwe`, `cvss_v4_vector` o `remediation`) y queda un control `report.generation_failed` ABORTED con motivo `missing_cwe`, `invalid_cvss_vector` o `missing_remediation` y `subject` = `finding_id` (uno por hallazgo y campo, en orden). El builder junta todos los faltantes antes de fallar: el error lista todos, no solo el primero.
+  - Sin CWE válido (y sin CVE) no hay entrada que buscar: el faltante es solo `cwe`, sin sumar el vector y la remediación de ese hallazgo.
+  - Sin entrada para la clave: faltan `cvss_v4_vector` y `remediation`.
+  - Con una entrada que existe pero no vale: se nombran los campos por los que no vale (`reviewer`, `title`, `date`...). Los que no son `cwe`, `cvss_v4_vector` ni `remediation` se registran con el motivo `invalid_catalog_entry`, así la bitácora dice el motivo real.
 - **Rechazado:** tomar el `vectorString` 4.0 del NVD. El snapshot de feeds no lo guarda hoy y agregarlo toca la capability `correlation`; queda para otro change. Mientras tanto, un CVE sin entrada curada hace fallar el informe, que es lo que pide el criterio 1.
 
 ### D4. Validación del vector CVSS v4.0 sin LLM
@@ -67,7 +70,8 @@ El puntaje se calcula con el algoritmo de referencia de FIRST (macrovectores y t
 
 - **Presentación con EPSS:** cada hallazgo muestra vector, puntaje, severidad y, al lado, EPSS con la fecha del snapshot. Sin EPSS: "sin dato". Con `feed_stale`: "dato desactualizado".
 - **Rechazado:** la expresión actual (`CVSS4_RE`), que acepta `CVSS:4.0/AV:N/.../SA:N/basura`. Se reemplaza por el parser.
-- **Pendiente:** implementación propia de la tabla de FIRST o la biblioteca `cvss` fijada por versión (ver Preguntas abiertas).
+- **Puntaje:** lo calcula la biblioteca `cvss==3.4` (fijada en `requirements.txt`, decisión del 2026-11-20), solo con un vector que ya pasó el parser propio. Con métricas de amenaza o ambientales distintas de `X` el puntaje deja de ser el base, así que el informe muestra la nomenclatura de FIRST (`CVSS-B`, `CVSS-BT`, `CVSS-BE` o `CVSS-BTE`) junto al puntaje.
+- **Puntaje del feed:** solo se compara con el calculado si el del mismo candidato es 4.0; un 3.1 se muestra, pero nunca se marca como "distinto".
 
 ### D5. Estructura PTES §7
 El JSON del informe tiene estas secciones, en este orden, y el markdown las renderiza con los mismos títulos:
@@ -92,11 +96,12 @@ El JSON del informe tiene estas secciones, en este orden, y el markdown las rend
 Para cada hallazgo, recorriendo la bitácora hasta `audit_seq`:
 
 - **`validated`**: existe un `validation.attempt` OK con `subject` = `finding_id` cuya evidencia verifica (`verify_evidence`) y tiene `result: "validated"` y `truncated: false`. Se muestra "Validado en sandbox".
+- **Cada intento tiene que venir del loop C real** (revisión de seguridad, B1). Para todo `validation.attempt` del hallazgo: lo registró `validation-orchestrator`; antes hay un `poc_catalog.run_parametrized` OK en fase `validate` con el mismo `subject` (el registro write-ahead de `Harness.invoke`), y los intentos nunca son más que esos envíos; su evidencia está en `evidence/<engagement>/<finding_id>-<n>.json` y el documento dice `finding_id` = `subject`. Un intento sin envío previo o de otro agente falla con `validation_mismatch`; una evidencia de otro hallazgo, de otro engagement, borrada, alterada o que no es JSON falla con `evidence_mismatch`, aunque el intento sea ABORTED.
 - **`not_validated`**, con motivo visible, en este orden de precedencia:
   1. `validation.closed` con su motivo: `no_catalog_entry` ("sin verificación en el catálogo"), `reviewer_rejected` ("validación rechazada por el Reviewer"), `reviewer_timeout` ("no validado por falta de revisión", 006 D5), `request_budget_exhausted` ("presupuesto de validación agotado");
   2. un BLOCKED de `poc_catalog.run_parametrized` con ese `subject` (por ejemplo `dns_out_of_scope`): "bloqueado por alcance";
   3. intentos que verifican pero ninguno positivo: "verificación negativa"; todos ABORTED: "error del sandbox";
-  4. un PENDING_HITL sin decisión posterior: "pendiente de revisión";
+  4. el último pedido o decisión del Reviewer: un PENDING_HITL sin decisión posterior es "pendiente de revisión"; un `hitl.reject` posterior sin cierre, "validación rechazada por el Reviewer"; un `hitl.approve` sin intento, "aprobado, sin intento registrado";
   5. nada de lo anterior (por ejemplo, el engagement no pasó por VALIDATE): "no se intentó validar".
 - **Evidencia que no verifica:** si un `validation.attempt` referencia un archivo que no existe o cuyo SHA-256 no coincide, el informe no se genera (`evidence_mismatch`, nombrando la referencia). Una evidencia alterada nunca se degrada en silencio a "no validado".
 - **Desacuerdo con el registro:** si `closures` dice `validated` y la bitácora no, el informe no se genera (`validation_mismatch`). Ante la duda, no se afirma una validación.
@@ -126,10 +131,11 @@ El resumen NO DEBE contener `CVE-`, `CWE-`, `CVSS:`, direcciones IP, rutas de ar
 ### D9. Versionado del informe
 Respuesta a "¿cómo se versiona un informe si cambia un hallazgo después de generado?":
 
-- **Cada versión es inmutable.** `report-v<N>.json` se escribe con `open("xb")`; nunca se sobrescribe. `N` = 1 + cantidad de `report.generated` del engagement en la bitácora (sobrevive reinicios). Un intento fallido no consume número.
+- **Cada versión es inmutable.** `report-v<N>.json` se escribe con `open("xb")`; nunca se sobrescribe. `N` = 1 + cantidad de `report.generated` del engagement en la bitácora (sobrevive reinicios), que tienen que ser `report-v1`, `report-v2`... en orden (si no, `version_conflict`). Un intento fallido no consume número.
+- **Todo fallo queda en la bitácora**, salvo con la cadena rota (ahí no se escribe nada): un archivo de la versión que ya existe es `version_conflict`, un error que no es de los previstos es `internal_error`. Si falla la escritura de un archivo o el `report.generated` después de escribir, los archivos de esa versión se borran (todavía no son una versión) para que el próximo intento no choque para siempre.
 - **Cambiar algo es una versión nueva.** Dentro de REPORT no corren los loops, así que lo que cambia es la tabla curada, la lista de falsos positivos o lo que el Reviewer pidió al rechazar. Una versión nueva lleva `supersedes: {report_id, sha256}` y `changes`: por huella (D10), `added`, `removed` o `modified` con la lista de campos que cambiaron, calculado de forma determinista contra la versión anterior.
 - **La aprobación es por versión y por hash.** Aprobar `report-v1` no aprueba `report-v2`. Solo se puede aprobar y entregar la **última** versión: generar una nueva deja sin efecto la aprobación de la anterior aunque no haya vencido.
-- **Después de DELIVERED** no se generan versiones nuevas en ese engagement (`engagement_delivered`); una fe de erratas queda fuera de este change.
+- **Después de DELIVERED** no se generan versiones nuevas en ese engagement (`engagement_delivered`); una fe de erratas queda fuera de este change. Como `Engagement` no persiste, alcanza con un `report.delivered` OK en la bitácora para que falle, aunque el estado en memoria diga REPORT.
 - **Rechazado:** un único informe que se actualiza en el lugar con un historial adentro. No hay forma de probar qué versión vio el Reviewer.
 
 ### D10. Hallazgos duplicados: huella determinista
@@ -179,13 +185,14 @@ NO sale, aunque esté en el informe o en el estado:
 Después de armar el documento, el escáner de D13 corre sobre todo el JSON serializado. Una coincidencia aborta la exportación (`sensitive_data`) y no se envía ni se escribe nada.
 
 ### D13. Redacción de datos sensibles
-`harness/redaction.py` reúne las reglas. Reutiliza las de la evidencia (006 D7): `Authorization`, `Cookie` y `Set-Cookie` como `[redacted]`, cookies sin valor y `Location` sin query ni fragmento. Se suma una lista de patrones, todos con expresión fija:
+`harness/redaction.py` reúne las reglas. Reutiliza las de la evidencia (006 D7): `Authorization`, `Cookie` y `Set-Cookie` como `[redacted]`, cookies sin valor y `Location` sin query ni fragmento. Se suma una lista de patrones, todos con expresión fija (la tabla resume; la lista vigente es la del código):
 
 | Id | Qué detecta | Expresión (resumen) |
 |---|---|---|
-| `auth-header` | encabezado de autorización con valor | `(?i)\bauthorization\s*:\s*\S+` |
+| `auth-header` | encabezado de autorización con valor, hasta el fin de línea | `(?i)\bauthorization\s*:[ \t]*\S[^\r\n]*` |
 | `bearer` | token bearer | `(?i)\bbearer\s+[A-Za-z0-9._~+/-]+=*` |
-| `cookie-value` | par cookie con valor | `(?i)\b(set-)?cookie\s*:\s*[^;\s=]+=[^;\s]+` |
+| `cookie-value` | encabezado de cookie con valor, hasta el fin de línea (todos los pares) | `(?i)\b(set-)?cookie\s*:[ \t]*[^\s;=]+=[^\r\n]*` |
+| `api-key-header` | encabezado de clave sin `=` (`X-API-Key: ...`) | `(?i)\b(x-api-key|api-key|x-auth-token|x-access-token)\s*:[ \t]*\S[^\r\n]*` |
 | `session-id` | identificadores de sesión conocidos | `(?i)\b(PHPSESSID|JSESSIONID|connect\.sid|token)=[^;&\s]+` |
 | `jwt` | JWT | `\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*` |
 | `credential-param` | credencial en query o formulario | `(?i)\b(password|passwd|pwd|pass|secret|api[_-]?key|access[_-]?token)=[^&\s]+` |
@@ -193,12 +200,14 @@ Después de armar el documento, el escáner de D13 corre sobre todo el JSON seri
 | `private-key` | clave privada PEM | `-----BEGIN [A-Z ]*PRIVATE KEY-----` |
 | `aws-key` | clave de acceso AWS | `\bAKIA[0-9A-Z]{16}\b` |
 | `email` | correo electrónico (usuarios del lab, contactos) | `\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b` |
-| `md5-hash` | hash MD5 suelto (contraseñas de DVWA) | `(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])` |
+| `md5-hash` | hash MD5 suelto (contraseñas de DVWA) | `(?<![0-9a-fA-F])[0-9a-fA-F]{32}(?![0-9a-fA-F])`; el escaneo final tolera la huella `fp1-<32 hex>` que arma el builder, la redacción no |
 | `canary` | canario de una validación | `ptaas[0-9a-f]{8}` |
 | `lab-default-cred` | credenciales por defecto del lab | `(?i)\badmin\s*[:/]\s*(password|admin123)\b` |
 
 - **Dos pasos.** (1) Cada campo de texto libre que entra al informe (títulos y textos de herramientas, extractos) pasa por `redact()`, que reemplaza cada coincidencia por `[redacted:<id>]`. Los textos curados no se redactan: se validan, y una entrada curada con una coincidencia es inválida. (2) Sobre el JSON y el markdown finales corre `scan()`: si queda **alguna** coincidencia, el informe no se genera (`sensitive_data`, con el id del patrón y la sección, nunca el valor).
 - **Lo que no es sensible y se permite:** los SHA-256 de 64 hex (el patrón MD5 no los toca por los límites de la expresión), los hashes cortos de 12 hex y las IP y nombres del laboratorio en alcance.
+- **El snapshot de entradas también.** `inputs-v<N>.json` es inmutable y su hash va en el informe, así que lo sensible no puede entrar ni ahí: guarda solo las observaciones usadas (host y CWE de los hallazgos), con `check_id`, `url` y `evidence` redactados, igual que el `rationale`, el `title` y las `evidence_refs` de los hallazgos, y pasa por `scan()` antes de escribirse.
+- **Markdown:** el texto de una herramienta va como código en línea, en una sola línea y sin acentos graves, para que un `<script>` o un `# 9.` de la evidencia no se interprete como HTML ni como título.
 - **El extracto de 512 bytes** de la evidencia de 006 (riesgo aceptado allí) entra al informe solo redactado y nunca a DefectDojo.
 - La lista vive en código, con un test por patrón (positivo y negativo). Agregar un patrón es un cambio revisado por el `security-reviewer`.
 
@@ -254,7 +263,7 @@ Si el RoE no tiene `report_destinations`, la entrega escribe `state/reports/<eng
 - **DefectDojo sin instancia en el laboratorio:** el modo API se prueba contra un servidor HTTP falso en el test; el recorrido real queda para cuando haya instancia (ver Preguntas abiertas).
 
 ## Preguntas abiertas
-1. **Cálculo del puntaje CVSS v4.0:** implementación propia de la tabla de FIRST (sin dependencias, más código a revisar) o la biblioteca `cvss` fijada por versión (agrega una dependencia). La validación del vector (D4) es propia en los dos casos.
+1. ~~**Cálculo del puntaje CVSS v4.0**~~ Resuelta el 2026-11-20: biblioteca `cvss==3.4` fijada (D4). La validación del vector sigue siendo propia.
 2. **Versión de DefectDojo y campos de Generic Findings Import:** hay que fijar la versión y confirmar si su importador acepta CVSS v4.0 y EPSS en campos propios. Hasta confirmarlo, viajan dentro de `description` (D12).
 3. **Instancia de DefectDojo en `lab/docker-compose.yml`:** agregarla (varios servicios y bastante memoria) o mantener solo el modo offline y el servidor falso de los tests.
 4. **Informe de un engagement abortado:** PTES pide informar lo hecho aunque se aborte; este change no genera informe en ABORTED.

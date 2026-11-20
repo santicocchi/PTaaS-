@@ -1,1 +1,3 @@
 pyyaml>=6
+# CVSS v4.0: puntaje con el algoritmo de FIRST (change 007, D4). Versión fijada a propósito.
+cvss==3.4

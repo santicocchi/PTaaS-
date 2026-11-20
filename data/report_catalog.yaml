@@ -1,0 +1,161 @@
+# Tabla curada del informe (change 007, D3). De acá salen, por CVE o por CWE, el título, las
+# descripciones, la remediación, las referencias y el vector CVSS v4.0 de cada hallazgo. Nada
+# de eso lo escribe un LLM ni sale del texto libre de una herramienta.
+#
+# Mismo procedimiento que la allow-list de templates y la lista de falsos positivos: cada
+# entrada la revisa alguien distinto del autor, en un PR. Una entrada con `reviewer: pendiente`
+# (o igual al autor) NO EXISTE para el informe: un hallazgo sin entrada revisada hace fallar
+# el informe, a propósito.
+#
+# Reglas que controla el builder (harness/report_catalog.py):
+# - `business_impact` y `title` son para una audiencia no técnica: sin CVE-, CWE-, CVSS:,
+#   direcciones IP, rutas de archivo ni referencias #sha256=. La primera oración de
+#   `remediation` tampoco (va al resumen ejecutivo).
+# - ningún texto puede tener datos sensibles (lista de harness/redaction.py).
+# - `cvss_v4_vector` tiene que pasar el parser estricto de harness/cvss4.py.
+#
+# Los vectores son por clase de hallazgo, con el laboratorio como contexto; quien revise cada
+# entrada tiene que confirmar el vector con la calculadora de FIRST.
+catalog_version: "0.1.0"
+entries:
+  CWE-693:
+    title: Falta la política de seguridad de contenido
+    technical_description: >-
+      La respuesta no envía el encabezado Content-Security-Policy. Sin esa política el
+      navegador no limita de dónde se cargan scripts y otros recursos, lo que facilita
+      explotar una inyección de código en la página.
+    business_impact: >-
+      Si aparece otra falla en la aplicación, un atacante tiene más facilidad para ejecutar
+      código en el navegador de los usuarios y robar sus sesiones.
+    remediation: >-
+      Configurar una política de seguridad de contenido restrictiva en el servidor web. Empezar
+      en modo de solo reporte, ajustar las fuentes permitidas y después aplicarla.
+    references: [WSTG-CONF-12]
+    cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:A/VC:N/VI:L/VA:N/SC:L/SI:L/SA:N"
+    author: claude
+    reviewer: pendiente
+    date: "2026-11-20"
+  CWE-1021:
+    title: La página se puede mostrar dentro de otro sitio (clickjacking)
+    technical_description: >-
+      La respuesta no envía X-Frame-Options ni la directiva frame-ancestors, así que otro sitio
+      puede cargarla en un marco y engañar al usuario para que haga clic en ella.
+    business_impact: >-
+      Un sitio malicioso puede hacer que un usuario realice acciones en la aplicación sin darse
+      cuenta, por ejemplo cambiar su configuración.
+    remediation: >-
+      Enviar la directiva frame-ancestors con el valor 'none' o 'self'. Mantener X-Frame-Options
+      en DENY para navegadores viejos.
+    references: [WSTG-CLNT-09]
+    cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N"
+    author: claude
+    reviewer: pendiente
+    date: "2026-11-20"
+  CWE-497:
+    title: El servidor publica su versión
+    technical_description: >-
+      El encabezado Server (o X-Powered-By) incluye el producto y la versión exacta del
+      software, lo que permite buscar vulnerabilidades conocidas de esa versión.
+    business_impact: >-
+      Le ahorra trabajo a un atacante: sabe qué software usa el servicio y puede buscar fallas
+      conocidas para esa versión.
+    remediation: >-
+      Configurar el servidor para que no publique producto ni versión en sus encabezados.
+      Mantener el software actualizado.
+    references: [WSTG-INFO-02]
+    cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"
+    author: claude
+    reviewer: pendiente
+    date: "2026-11-20"
+  CWE-1004:
+    title: Cookie de sesión accesible desde scripts
+    technical_description: >-
+      La cookie de sesión no tiene el atributo HttpOnly, así que un script de la página puede
+      leerla.
+    business_impact: >-
+      Si aparece otra falla en la aplicación, un atacante puede robar la sesión de un usuario y
+      actuar en su nombre.
+    remediation: >-
+      Marcar la cookie de sesión con el atributo HttpOnly. Revisar también Secure y SameSite.
+    references: [WSTG-SESS-02]
+    cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:A/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"
+    author: claude
+    reviewer: pendiente
+    date: "2026-11-20"
+  CWE-1275:
+    title: Cookie de sesión sin restricción entre sitios
+    technical_description: >-
+      La cookie de sesión no tiene el atributo SameSite, así que el navegador la envía también
+      en solicitudes que se originan en otros sitios.
+    business_impact: >-
+      Un sitio malicioso puede provocar acciones en la aplicación usando la sesión abierta del
+      usuario.
+    remediation: >-
+      Marcar la cookie de sesión con SameSite=Lax o Strict. Agregar protección contra
+      solicitudes falsificadas en los formularios.
+    references: [WSTG-SESS-02]
+    cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:A/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N"
+    author: claude
+    reviewer: pendiente
+    date: "2026-11-20"
+  CWE-614:
+    title: Cookie de sesión que puede viajar sin cifrar
+    technical_description: >-
+      La cookie de sesión no tiene el atributo Secure, así que el navegador la puede enviar
+      por una conexión sin cifrar.
+    business_impact: >-
+      En una red compartida, alguien puede capturar la sesión de un usuario.
+    remediation: >-
+      Marcar la cookie de sesión con el atributo Secure y servir la aplicación solo por HTTPS.
+    references: [WSTG-SESS-02]
+    cvss_v4_vector: "CVSS:4.0/AV:A/AC:H/AT:P/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"
+    author: claude
+    reviewer: pendiente
+    date: "2026-11-20"
+  CWE-548:
+    title: Listado de directorios habilitado
+    technical_description: >-
+      El servidor muestra el contenido de un directorio cuando no hay página de índice, lo que
+      expone archivos que no deberían ser públicos.
+    business_impact: >-
+      Cualquiera puede ver qué archivos tiene el servicio y descargar alguno que no debería
+      estar disponible.
+    remediation: >-
+      Deshabilitar el listado de directorios en el servidor web. Quitar del sitio los archivos
+      que no hacen falta.
+    references: [WSTG-CONF-04]
+    cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"
+    author: claude
+    reviewer: pendiente
+    date: "2026-11-20"
+  CWE-79:
+    title: Datos del usuario que se devuelven sin codificar
+    technical_description: >-
+      Un valor enviado en la solicitud vuelve en la respuesta sin codificar, lo que permite
+      inyectar código que el navegador ejecuta.
+    business_impact: >-
+      Un atacante puede preparar un enlace que, al abrirlo, ejecute acciones en nombre del
+      usuario o robe su sesión.
+    remediation: >-
+      Codificar cada valor según el contexto donde se muestra. Validar la entrada y usar una
+      política de seguridad de contenido como defensa adicional.
+    references: [WSTG-INPV-01]
+    cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:N/VI:N/VA:N/SC:L/SI:L/SA:N"
+    author: claude
+    reviewer: pendiente
+    date: "2026-11-20"
+  CWE-209:
+    title: Mensajes de error con detalles internos
+    technical_description: >-
+      Ante una entrada inesperada la aplicación responde con un error que incluye detalles
+      internos (rutas, consultas o trazas).
+    business_impact: >-
+      Le da a un atacante información sobre cómo está construido el servicio, lo que facilita
+      otros ataques.
+    remediation: >-
+      Mostrar mensajes de error genéricos y registrar el detalle solo del lado del servidor.
+    references: [WSTG-ERRH-01]
+    cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"
+    author: claude
+    reviewer: pendiente
+    date: "2026-11-20"
