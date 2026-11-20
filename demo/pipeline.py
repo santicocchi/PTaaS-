@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from demo.checkpoint1 import _lab_reachable, bad, dim, ok, prepare_roe, warn
+from demo.checkpoint1 import bad, dim, ok, prepare_roe, warn
 from demo.loop_a import SIM_DNS
 from demo.loop_a import sim_runner as recon_sim_runner
 from harness.adapters.common import Runner, default_runner
@@ -64,6 +64,11 @@ from harness.tokens import TokenIssuer
 
 ROOT = Path(__file__).resolve().parent
 ROE_TEMPLATE = ROOT / "roe-pipeline.yaml"
+# 010, 2.6: plantillas de RoE del repo, elegidas por NOMBRE (nunca una ruta). El runner monta el
+# repo de solo lectura, así que no las puede tocar; demo/validation.py compara contra estas.
+ROE_TEMPLATES = {"pipeline": ROE_TEMPLATE, "integrador": ROOT / "roe-integrador.yaml"}
+# Host que tiene que resolver para correr con --lab, según la RoE.
+LAB_PROBE = {"pipeline": "dvwa.lab.test", "integrador": "phantomcorp.lab.test"}
 TEMPLATES = ALLOWLIST
 HANDOFF_ACTION = "handoff.written"       # entrega del análisis al loop C (demo/validation.py)
 
@@ -172,6 +177,13 @@ def write_handoff(out: Path, engagement_id: str, roe_source: dict[str, Any],
     return path
 
 
+def _lab_reachable(host: str) -> bool:
+    try:
+        return bool(system_resolver(host))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _phase(title: str) -> None:
     print(f"\n── {title}")
 
@@ -180,16 +192,23 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Relevamiento → correlación → análisis")
     parser.add_argument("--lab", action="store_true", help="ejecutar contra el laboratorio")
     parser.add_argument("--out", type=Path, default=ROOT / "out")
+    parser.add_argument("--roe", choices=sorted(ROE_TEMPLATES), default="pipeline",
+                        help="plantilla de RoE del repo (integrador = práctico final, solo --lab)")
     args = parser.parse_args(argv)
-    if args.lab and not _lab_reachable():
-        print("No se resuelve dvwa.lab.test: --lab se corre dentro del contenedor runner:\n"
+    if args.roe == "integrador" and not args.lab:
+        print("La RoE del integrador corre solo contra el laboratorio (--lab): la simulación "
+              "graba salidas de DVWA, no de phantomcorp.", file=sys.stderr)
+        return 2
+    probe = LAB_PROBE[args.roe]
+    if args.lab and not _lab_reachable(probe):
+        print(f"No se resuelve {probe}: --lab se corre dentro del contenedor runner:\n"
               "  docker compose -f lab/docker-compose.yml exec runner python -m demo.pipeline "
-              "--lab", file=sys.stderr)
+              f"--lab --roe {args.roe}", file=sys.stderr)
         return 2
 
     now = datetime.now(UTC)
-    engagement_id = "demo-pipeline-" + now.strftime("%Y%m%d-%H%M%S")
-    roe = parse_roe(prepare_roe(engagement_id, now, ROE_TEMPLATE))
+    engagement_id = f"demo-{args.roe}-" + now.strftime("%Y%m%d-%H%M%S")
+    roe = parse_roe(prepare_roe(engagement_id, now, ROE_TEMPLATES[args.roe]))
     audit = SqliteAuditLog.open(engagement_id, args.out)
     issuer = TokenIssuer(audit)
     graph = AssetGraph.open(engagement_id, args.out)

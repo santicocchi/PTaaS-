@@ -11,8 +11,8 @@
 - [x] 2.3 Catálogo `0.3.0`: `lab_targets` con `phantomcorp` (propuesto por claude, aprobado por santiago el 2026-11-20)
 - [x] 2.4 `demo/roe-integrador.yaml`
 - [x] 2.5 ZAP: `setOptionParseRobotsTxt` fijo en `true` (delta de `tool-adapters`)
-- [ ] 2.6 Demos (`pipeline`, `validation`, `report`): elegir la RoE entre las del repo (`roe-pipeline` o `roe-integrador`) sin aflojar el control de la entrega del loop C
-- [ ] 2.7 Trazabilidad: commit del repo del curso e `Id` de la imagen `ptaas-phantomcorp` en la bitácora de la corrida
+- [x] 2.6 Demos (`pipeline`, `validation`, `report`): elegir la RoE entre las del repo (`roe-pipeline` o `roe-integrador`) sin aflojar el control de la entrega del loop C
+- [x] 2.7 Trazabilidad: commit del repo del curso e `Id` de la imagen `ptaas-phantomcorp` en la bitácora del host (`target.provenance`, delta de `validation`)
 
 ## Verificación
 - [x] 3.1 Tests de los Scenarios de los deltas

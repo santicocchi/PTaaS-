@@ -285,3 +285,15 @@ La RoE es `demo/roe-integrador.yaml`: solo `phantomcorp.lab.test` / `10.99.0.12/
 Juice Shop excluidos. El PTaaS hace recon, análisis y verificaciones **inertes**; la explotación
 (hitos R2 a R4 del práctico) se hace a mano desde la consola del curso y no pasa por acá.
 Sin `--profile integrador`, el laboratorio es el de siempre.
+
+La corrida usa las mismas demos con `--roe integrador` (solo con `--lab`: la simulación graba
+salidas de DVWA). El loop C acepta la entrega porque su RoE coincide con `demo/roe-integrador.yaml`,
+y registra en la bitácora del host la procedencia del target (`target.provenance`: Id de la
+imagen `ptaas-phantomcorp` y commit de tu clon del repo del curso).
+
+```powershell
+docker compose -f lab/docker-compose.yml exec runner python -m demo.pipeline --lab --roe integrador
+```
+
+Después, `demo.validation` y `demo.report` con el engagement `demo-integrador-…` que imprime el
+pipeline, igual que arriba.
