@@ -45,7 +45,7 @@ def test_pipeline_simulado_con_la_allowlist_del_repo(tmp_path, capsys):
 
 
 def test_pipeline_lab_sin_laboratorio_no_hace_nada(tmp_path, monkeypatch):
-    monkeypatch.setattr(pipeline, "_lab_reachable", lambda: False)
+    monkeypatch.setattr(pipeline, "_lab_reachable", lambda host: False)
     assert pipeline.main(["--lab", "--out", str(tmp_path)]) == 2
     assert not list(tmp_path.iterdir())
 

@@ -19,7 +19,8 @@ ahí. Una aprobación escrita en `demo/out` desde el runner no cuenta.
 
 **Qué se verifica al importar:** la cadena de la bitácora de la entrega, que haya un solo
 `handoff.written` del orquestador con el SHA-256 del archivo, que el modo (sim o lab) sea el de
-esta corrida y que el RoE sea `demo/roe-pipeline.yaml` (que el runner no puede tocar) salvo
+esta corrida y que el RoE sea una plantilla del repo, `demo/roe-pipeline.yaml` o
+`demo/roe-integrador.yaml` (que el runner no puede tocar), salvo
 `engagement_id`, la ventana y el hash de aprobación. Así no se puede quitar una exclusión ni
 agrandar el alcance editando la entrega. Si algo falla, queda `handoff.rejected` en la bitácora
 del host y no se envía nada.
@@ -49,7 +50,7 @@ import yaml
 
 from demo.checkpoint1 import bad, dim, ok, warn
 from demo.loop_a import SIM_DNS
-from demo.pipeline import HANDOFF_ACTION, ROE_TEMPLATE, ROOT
+from demo.pipeline import HANDOFF_ACTION, ROE_TEMPLATES, ROOT
 from harness.adapters.poc_catalog_adapter import PocCatalogRun
 from harness.analysis import FindingStore, Observation
 from harness.approvals import REVIEWER_RE, ApprovalStore
@@ -60,7 +61,13 @@ from harness.evidence import verify_evidence
 from harness.poc.catalog import catalog_version, load_catalog
 from harness.policy_loader import phase_allowlist
 from harness.roe import RoEError, parse_roe
-from harness.sandbox import LAB_NETWORK, DockerRunner, DockerSandbox, default_docker_runner
+from harness.sandbox import (
+    LAB_NETWORK,
+    DockerRunner,
+    DockerSandbox,
+    SandboxTimeout,
+    default_docker_runner,
+)
 from harness.schemas import CandidateFinding, PrioritizedVuln
 from harness.tokens import TokenIssuer
 from harness.validation import CAPABILITY, ValidationLoop, ValidationResult
@@ -76,6 +83,12 @@ REJECTED_ACTION = "handoff.rejected"
 GATE_ACTION = "gate.approve"
 GATE = "before_validate"
 IMAGE_ACTION = "sandbox.image"
+PROVENANCE_ACTION = "target.provenance"              # 010, 2.7: qué target se auditó
+INTEGRADOR_HOST = "phantomcorp.lab.test"
+INTEGRADOR_IMAGE = "ptaas-phantomcorp"
+LAB_ENV = ROOT.parent / "lab" / ".env"
+_TEMPLATE_OF_ENG = re.compile(r"^demo-([a-z]+)-")
+_HASH_RE = re.compile(r"^(sha256:)?[0-9a-f]{7,64}\Z")     # Id de imagen o commit de git
 _ENGAGEMENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}\Z")
 _CONTAINER_ID_RE = re.compile(r"^[0-9a-f]{12,64}\Z")
 _ROE_VARIABLE = ("engagement_id", "window", "approval")
@@ -172,6 +185,51 @@ def sandbox_image(runner: DockerRunner) -> str | None:
     return out.strip() if code == 0 else None
 
 
+# ---- procedencia del target del integrador (010, 2.7) ---------------------------------------
+
+def is_integrador(roe: dict[str, Any]) -> bool:
+    return INTEGRADOR_HOST in ((roe.get("scope") or {}).get("domains") or [])
+
+
+def _env_value(env: Path, key: str) -> str | None:
+    try:
+        lines = env.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        name, sep, value = line.strip().partition("=")
+        if sep and name.strip() == key and value.strip():
+            return value.strip()
+    return None
+
+
+def _clean_id(code: int, out: str) -> str:
+    """Solo un hash: cualquier otra cosa (incluidos caracteres de control) es `desconocido`."""
+    value = out.strip()
+    return value if code == 0 and _HASH_RE.match(value) else "desconocido"
+
+
+def _run_id(runner: DockerRunner, argv: list[str]) -> str:
+    try:
+        return _clean_id(*runner(argv, None, 20))
+    except SandboxTimeout:
+        return "desconocido"
+
+
+def target_provenance(runner: DockerRunner, env: Path = LAB_ENV) -> str:
+    """`ptaas-phantomcorp@<Id de la imagen> repo@<commit del repo del curso>`. Lo que no se
+    puede obtener queda `desconocido`: es trazabilidad, no un gate (tampoco un timeout)."""
+    image = _run_id(runner, ["docker", "image", "inspect", INTEGRADOR_IMAGE, "--format",
+                             "{{.Id}}"])
+    context = (_env_value(env, "PTAAS_INTEGRADOR_CONTEXT") or "").strip("\"'")
+    commit = "desconocido"
+    if context and Path(context).is_absolute() and Path(context).is_dir():
+        # Repo de terceros: sin fsmonitor (ejecutaría un hook) y sin tomar locks.
+        commit = _run_id(runner, ["git", "-c", "core.fsmonitor=false", "--no-optional-locks",
+                                  "-C", context, "rev-parse", "HEAD"])
+    return f"{INTEGRADOR_IMAGE}@{image} repo@{commit}"
+
+
 # ---- entrega del análisis ------------------------------------------------------------------
 
 class HandoffError(Exception):
@@ -189,10 +247,17 @@ def _template_part(roe: dict[str, Any]) -> dict[str, Any]:
 
 
 def check_roe(roe: dict[str, Any], eng: str, now: datetime) -> None:
-    """El RoE de la entrega es la plantilla del repo, con su engagement y una ventana sana."""
-    template = yaml.safe_load(ROE_TEMPLATE.read_text(encoding="utf-8"))
+    """El RoE de la entrega es LA plantilla del repo que corresponde al engagement
+    (`demo-<plantilla>-…`, 010), con su engagement y una ventana sana. Así una entrega forjada
+    no puede cambiar de target (DVWA ↔ phantomcorp) sin que cambie el nombre que ve el Reviewer."""
+    match = _TEMPLATE_OF_ENG.match(eng)
+    if not match or match.group(1) not in ROE_TEMPLATES:
+        raise HandoffError(f"el engagement {eng!r} no corresponde a ninguna plantilla del repo")
+    path = ROE_TEMPLATES[match.group(1)]
+    template = yaml.safe_load(path.read_text(encoding="utf-8"))
     if _template_part(roe) != _template_part(template):
-        raise HandoffError("el RoE de la entrega no es el de demo/roe-pipeline.yaml")
+        raise HandoffError(f"el RoE de la entrega no es ninguna plantilla del repo para {eng}: "
+                           f"se esperaba demo/{path.name}")
     if roe.get("engagement_id") != eng:
         raise HandoffError("la entrega es de otro engagement")
     try:
@@ -232,6 +297,8 @@ def verify_inbox(inbox: Path, eng: str, lab: bool, now: datetime) -> tuple[bytes
         raise HandoffError(f"la entrega es de modo {data.get('mode')!r}: no se mezcla "
                            "simulación con laboratorio")
     check_roe(data["roe"], eng, now)
+    if is_integrador(data["roe"]) and not lab:
+        raise HandoffError("la RoE del integrador corre solo contra el laboratorio")
     return raw, data
 
 
@@ -385,6 +452,9 @@ def main(argv: list[str] | None = None) -> int:
         return _err(f"No se puede validar: {exc}")
 
     audit.record_control(eng, AGENT, IMAGE_ACTION, image, Result.OK)    # qué imagen corrió
+    if args.lab and is_integrador(data["roe"]):                          # qué target se auditó
+        audit.record_control(eng, AGENT, PROVENANCE_ACTION, INTEGRADOR_HOST, Result.OK,
+                             evidence=target_provenance(runner))
     catalog = load_catalog()
     sandbox = DockerSandbox(eng, catalog, image=image, runner=runner)
     adapter = PocCatalogRun(sandbox, catalog, state_dir=state, catalog_version=catalog_version())
