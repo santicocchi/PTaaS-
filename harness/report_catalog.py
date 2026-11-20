@@ -23,6 +23,7 @@ REPORT_CATALOG = ROOT / "data" / "report_catalog.yaml"
 TEXT_FIELDS = ("title", "technical_description", "business_impact", "remediation")
 REQUIRED = (*TEXT_FIELDS, "references", "cvss_v4_vector", "author", "reviewer", "date")
 _KEY_RE = re.compile(r"^(CVE-[0-9]{4}-[0-9]{4,}|CWE-[1-9][0-9]{0,4})\Z")
+_CWE_RE = re.compile(r"^CWE-[1-9][0-9]{0,4}\Z")
 
 # Lo que no puede leer una audiencia no técnica (D8): identificadores, vectores, IP (v4 y v6),
 # URL, rutas y referencias a evidencia.
@@ -55,13 +56,15 @@ class CatalogEntry:
     author: str
     reviewer: str
     date: str
+    cwe: str | None = None        # solo en entradas por CVE: el CWE si el feed no lo trae
 
     def as_dict(self) -> dict[str, Any]:
         return {"key": self.key, "title": self.title,
                 "technical_description": self.technical_description,
                 "business_impact": self.business_impact, "remediation": self.remediation,
                 "references": list(self.references), "cvss_v4_vector": self.cvss_v4_vector,
-                "author": self.author, "reviewer": self.reviewer, "date": self.date}
+                "author": self.author, "reviewer": self.reviewer, "date": self.date,
+                "cwe": self.cwe}
 
 
 def entry_problems(key: str, raw: Any) -> list[str]:
@@ -88,6 +91,9 @@ def entry_problems(key: str, raw: Any) -> list[str]:
     if isinstance(raw["remediation"], str) and raw["remediation"].strip() \
             and has_jargon(first_sentence(raw["remediation"])):
         problems.append("remediation")
+    if "cwe" in raw and not (key.startswith("CVE-") and isinstance(raw["cwe"], str)
+                             and _CWE_RE.match(raw["cwe"])):
+        problems.append("cwe")
     refs = raw["references"]
     if not isinstance(refs, list) or not all(isinstance(r, str) for r in refs) \
             or any(scan(r, "references") for r in refs):
@@ -126,6 +132,7 @@ class ReportCatalog:
                                     raw["technical_description"].strip(),
                                     raw["business_impact"].strip(), raw["remediation"].strip(),
                                     tuple(raw["references"]), raw["cvss_v4_vector"],
-                                    raw["author"], raw["reviewer"], raw["date"]), []
+                                    raw["author"], raw["reviewer"], raw["date"],
+                                    raw.get("cwe")), []
             problems += found
         return None, sorted(set(problems))

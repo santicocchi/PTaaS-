@@ -356,6 +356,9 @@ def main(argv: list[str] | None = None) -> int:
             import_handoff(state, eng, raw, data, audit)
             print(dim(f"   entrega importada a {_shown(state)} (SHA-256 {_sha(raw)[:12]}…)"))
         data = load_imported(state, eng, audit)
+        if data.get("mode") != ("lab" if args.lab else "sim"):
+            raise HandoffError(f"la entrega importada es de modo {data.get('mode')!r}: no se "
+                               "mezcla simulación con laboratorio")
 
         # 2. Gate before_validate del Reviewer, en la bitácora del host.
         if args.approve_phase and gate_reviewer(audit, eng) is None:

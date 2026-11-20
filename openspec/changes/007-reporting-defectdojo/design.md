@@ -51,6 +51,8 @@ Cada hallazgo del informe (todos menos los `discarded`, ver D7) DEBE tener CWE, 
 - **Campos de cada entrada:** `title`, `technical_description`, `business_impact` (lenguaje no técnico, D8), `remediation`, `references` (por ejemplo `WSTG-CONF-07`), `cvss_v4_vector`, `author`, `reviewer`, `date`.
 - **Entrada válida:** `reviewer` no vacío, distinto de `pendiente` y distinto de `author` (sin distinguir mayúsculas, como la lista de falsos positivos); `author`, `reviewer`, `date` y `cvss_v4_vector` son texto (una fecha YAML sin comillas no vale). Una entrada sin revisar no existe para el builder.
 - **CWE:** sale del candidato y DEBE cumplir `^CWE-[1-9][0-9]{0,4}\Z`. `unknown` no es un CWE.
+  - **CWE curado (decisión del 20/11):** una entrada por CVE puede traer `cwe`. Se usa solo si el feed no trae CWE (`unknown`, como los CVE que NVD publica sin CWE). Si el feed trae otro distinto, el informe falla con `cwe`: no se elige uno. En una entrada por CWE el campo `cwe` hace inválida la entrada. Así el CWE sigue saliendo de una persona que revisó la tabla, no del LLM ni del texto del feed.
+  - **Simulación:** los CVE sintéticos del feed de prueba (`CVE-2099-…`) tienen sus entradas en `demo/report_catalog_sim.yaml`, que `demo/report.py` suma solo si la entrega es de simulación. No entran a la tabla del repo.
 - **Sin conversión de CVSS.** Un CVE con solo puntaje 3.1 en el feed no se convierte a 4.0 (005 D5). Si la tabla no tiene un vector 4.0 para ese CVE (o para su CWE), el informe no se genera.
 - **Fallo:** si falta algo, no se escribe ningún archivo de informe, se lanza `MissingField` con el `finding_id` y el nombre del campo (`cwe`, `cvss_v4_vector` o `remediation`) y queda un control `report.generation_failed` ABORTED con motivo `missing_cwe`, `invalid_cvss_vector` o `missing_remediation` y `subject` = `finding_id` (uno por hallazgo y campo, en orden). El builder junta todos los faltantes antes de fallar: el error lista todos, no solo el primero.
   - Sin CWE válido (y sin CVE) no hay entrada que buscar: el faltante es solo `cwe`, sin sumar el vector y la remediación de ese hallazgo.
@@ -120,9 +122,9 @@ Respuesta a "¿cómo se trata un hallazgo no validado de severidad alta?":
 ### D8. Resumen ejecutivo para audiencia no técnica
 Plantilla determinista en español, armada desde los conteos y el campo `business_impact` de la tabla curada:
 
-- postura general por regla fija: "crítica" si hay algún `Critical`, "alta" si hay algún `High`, "media" si hay algún `Medium`, "baja" en otro caso;
+- nivel de riesgo general por regla fija: "crítico" si hay algún `Critical`, "alto" si hay algún `High`, "medio" si hay algún `Medium`, "bajo" en otro caso (en el recorrido del laboratorio "la postura es alta" se leía como algo bueno);
 - conteo por severidad, separando validados y no validados;
-- los tres hallazgos de mayor prioridad, con su `business_impact`, sin identificadores técnicos;
+- los tres hallazgos distintos de mayor prioridad (el mismo en varios hosts cuenta una vez), con su `business_impact`, sin identificadores técnicos;
 - recomendaciones resumidas: la primera oración de la remediación de esos tres;
 - una línea con los altos no validados (D7).
 
@@ -271,6 +273,11 @@ Si el RoE no tiene `report_destinations`, la entrega escribe `state/reports/<eng
   - `_INTERNAL_RE` tiene la red `10.97.x` escrita a mano: es defensa en profundidad, la protección principal es la lista permitida;
   - el gate en el Harness es la aprobación en memoria del Guard (mismo diseño que el 006); `deliver()` es el único lugar que la otorga y la retira;
   - `DeliveryContext.clock` es inyectable para los tests.
+- **Riesgos aceptados de la demo y del CWE curado (revisión de seguridad del PR 3):**
+  - un CWE curado distinto del del feed queda en la bitácora con el motivo `missing_cwe`: el campo es el correcto, pero el motivo dice "falta" cuando hay un conflicto;
+  - si la entrada por CVE no vale (por ejemplo, sin revisar), se usa la entrada por CWE y los problemas de la del CVE no se informan (comportamiento previo de `lookup`);
+  - el informe de una simulación no se marca como tal, y en la demo los activos salen sin tecnologías (el grafo del runner no se lee);
+  - `--catalog` acepta cualquier archivo: quien corre la demo en el host es de confianza (mismo supuesto que el Reviewer del 006).
 
 ## Preguntas abiertas
 1. ~~**Cálculo del puntaje CVSS v4.0**~~ Resuelta el 2026-11-20: biblioteca `cvss==3.4` fijada (D4). La validación del vector sigue siendo propia.

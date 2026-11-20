@@ -3,7 +3,7 @@
 Tests: tests/audit_log/test_report_records.py
 
 ## ADDED Requirement: Registros del informe
-La bitácora DEBE aceptar estos registros de control, todos con `subject`:
+La bitácora DEBE aceptar estos registros de control, todos con `subject`. Sus motivos amplían los conjuntos cerrados de los requisitos de motivos del 004 y del 006; cualquier motivo fuera de la unión de esos conjuntos DEBE seguir rechazándose:
 - `report.generated`: resultado OK, evidencia `reports/<engagement>/report-v<N>.json#sha256=<hex>` y `subject` `report-v<N>`, con el mismo `N` en los dos;
 - `report.generation_failed`: resultado ABORTED, `subject` = `finding_id` o `report_id`, y motivo del conjunto cerrado `missing_cwe`, `invalid_cvss_vector`, `missing_remediation`, `invalid_catalog_entry`, `evidence_mismatch`, `validation_mismatch`, `finding_mismatch`, `sensitive_data`, `summary_jargon`, `not_lab_target`, `out_of_scope`, `engagement_not_in_report`, `engagement_delivered`, `version_conflict`, `internal_error`;
 - `hitl.approve_delivery` y `hitl.reject_delivery`: resultado OK, agente `reviewer:<nombre>`, evidencia = referencia hasheada de la fila del registro con su número (`approvals/<engagement>/<report_id>#sha256=`) y `subject` = `report_id`;

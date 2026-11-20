@@ -405,6 +405,13 @@ def build(inputs: dict[str, Any], entries: list[Entry], state_dir: Path,
         cwe = main["cwe"]
         entry, problems = catalog.lookup(main.get("cve"), cwe)
         fid = fids[0]
+        if entry is not None and entry.cwe is not None:
+            # 007: una entrada por CVE revisada pone el CWE cuando el feed no lo trae. Si el
+            # feed trae otro, no se elige: falla indicando el campo.
+            if CWE_RE.match(cwe) and cwe != entry.cwe:
+                missing.append((fid, "cwe"))
+                continue
+            cwe = entry.cwe
         if not CWE_RE.match(cwe):
             missing.append((fid, "cwe"))
         if entry is None:
@@ -518,8 +525,23 @@ def _counts(findings: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
 
 def _posture(findings: list[dict[str, Any]]) -> str:
     sev = {f["severity"] for f in findings}
-    return ("crítica" if "Critical" in sev else "alta" if "High" in sev
-            else "media" if "Medium" in sev else "baja")
+    return ("crítico" if "Critical" in sev else "alto" if "High" in sev
+            else "medio" if "Medium" in sev else "bajo")
+
+
+def _top(findings: list[dict[str, Any]], n: int = 3) -> list[dict[str, Any]]:
+    """Los primeros n hallazgos distintos: el mismo en varios hosts cuenta una vez."""
+    out: list[dict[str, Any]] = []
+    for f in findings:
+        if f["catalog_entry"] not in {t["catalog_entry"] for t in out}:
+            out.append(f)
+        if len(out) == n:
+            break
+    return out
+
+
+def _confirmed(n: int) -> str:
+    return f"{n} se confirmó" if n == 1 else f"{n} se confirmaron"
 
 
 def _sections(inputs: dict[str, Any], entries: list[Entry], findings: list[dict[str, Any]],
@@ -527,7 +549,8 @@ def _sections(inputs: dict[str, Any], entries: list[Entry], findings: list[dict[
               previous_version: dict[str, Any] | None) -> list[dict[str, Any]]:
     counts = _counts(findings)
     high_unvalidated = [f for f in findings if f["manual_check"]]
-    top = findings[:3]
+    top = _top(findings)
+    validated = sum(c["validated"] for c in counts.values())
     roe = inputs["roe"]
     results = {r.value: 0 for r in Result}
     for e in entries:
@@ -539,11 +562,12 @@ def _sections(inputs: dict[str, Any], entries: list[Entry], findings: list[dict[
             "posture": _posture(findings),
             "counts": counts,
             "top": [{"title": f["title"], "impact": f["business_impact"]} for f in top],
-            "recommendations": [first_sentence(f["remediation"]) for f in top],
+            "recommendations": list(dict.fromkeys(first_sentence(f["remediation"])
+                                                  for f in top)),
             "unvalidated_high": len(high_unvalidated),
-            "text": (f"La postura general de seguridad es {_posture(findings)}. Se informan "
-                     f"{len(findings)} hallazgos; {sum(c['validated'] for c in counts.values())}"
-                     " se confirmaron en un entorno aislado. "
+            "text": (f"El nivel de riesgo general es {_posture(findings)}. Se informan "
+                     f"{len(findings)} hallazgos; {_confirmed(validated)} en un entorno "
+                     "aislado. "
                      + (f"{len(high_unvalidated)} hallazgos de severidad alta o crítica no "
                         "pudieron confirmarse y requieren verificación manual."
                         if high_unvalidated else
@@ -808,10 +832,15 @@ def _roe_summary(roe: RoE) -> dict[str, Any]:
             "roe_sha256": roe.digest, "approver_role": "Reviewer del engagement"}
 
 
-def _assets(graph: AssetGraph) -> list[dict[str, Any]]:
+def _assets(graph: AssetGraph, roe: dict[str, Any],
+            lab: dict[str, list[str]]) -> list[dict[str, Any]]:
+    """Activos de la sección 3. Un activo marcado en alcance que no está en el laboratorio o
+    en el RoE (o está excluido) no se publica: el grafo lo escribe quien relevó."""
     out: dict[str, dict[str, Any]] = {}
     for a in graph.assets(in_scope=True):
         h = host_of(a)
+        if not (_in_lab(h, lab) and _in_roe(h, roe)):
+            continue
         info = out.setdefault(h, {"host": h, "ports": set(), "technologies": set()})
         if a.type == "http_service":
             from urllib.parse import urlsplit
@@ -987,7 +1016,7 @@ def _prepare(ctx: ReportContext, vulns: list[PrioritizedVuln],
         "format": "ptaas-report-inputs/1", "engagement_id": eng, "report_id": report_id,
         "audit_seq": len(entries), "roe": _roe_summary(ctx.roe), "lab": _lab_targets(),
         **_snapshot_findings(vulns, candidates, ctx.store),
-        "assets": _assets(ctx.graph),
+        "assets": _assets(ctx.graph, _roe_summary(ctx.roe), _lab_targets()),
         "catalog": {"sha256": ctx.catalog.sha256, "entries": used},
         "poc_catalog_version": poc_catalog_version(),
         "feeds": _feeds(), "policy_sha256": _sha(POLICY.read_bytes()),

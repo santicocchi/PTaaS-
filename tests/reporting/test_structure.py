@@ -36,17 +36,39 @@ def test_resumen_sin_jerga(report):
     assert not re.search(r"\b\d{1,3}(\.\d{1,3}){3}\b", text)
     md_summary = md.split("# 2.")[0]
     assert "CVE-" not in md_summary and "CVSS:" not in md_summary
-    assert summary["posture"] == "crítica"
+    assert summary["posture"] == "crítico"
     assert summary["counts"]["Critical"] == {"validated": 0, "not_validated": 1}
 
 
-def test_postura_alta(tmp_path):
+def test_riesgo_alto(tmp_path):
     lab = Lab(tmp_path)
     lab.finding("f-1", cwe="CWE-22")
     lab.finding("f-2", cwe="CWE-693")
     doc = json.loads(lab.generate().path.read_bytes())
-    assert doc["sections"][0]["content"]["posture"] == "alta"
-    assert "postura general de seguridad es alta" in doc["sections"][0]["content"]["text"]
+    assert doc["sections"][0]["content"]["posture"] == "alto"
+    assert "nivel de riesgo general es alto" in doc["sections"][0]["content"]["text"]
+
+
+def test_resumen_sin_repetir_el_mismo_hallazgo(tmp_path):
+    """El mismo hallazgo en dos hosts aparece una vez en el resumen (recorrido del lab)."""
+    lab = Lab(tmp_path)
+    lab.finding("f-1", cwe="CWE-22", priority=9.0)
+    lab.finding("f-2", cwe="CWE-22", host="www.dvwa.lab.test", priority=8.0)
+    lab.finding("f-3", cwe="CWE-693", priority=1.0)
+    summary = json.loads(lab.generate().path.read_bytes())["sections"][0]["content"]
+    csp = "Falta la política de seguridad de contenido"
+    assert [t["title"] for t in summary["top"]] == ["Lectura de archivos fuera del sitio", csp]
+    assert len(summary["recommendations"]) == len(set(summary["recommendations"]))
+    assert "0 se confirmaron" in summary["text"]
+
+
+def test_un_solo_confirmado_en_singular(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1", priority=5.0)
+    lab.attempt("f-1")
+    lab.approvals.close("f-1", "validated", None, 1.0)
+    text = json.loads(lab.generate().path.read_bytes())["sections"][0]["content"]["text"]
+    assert "1 se confirmó en un entorno aislado" in text
 
 
 def test_alcance_sin_datos_de_contacto(report):
@@ -92,3 +114,17 @@ def test_jerga_en_el_resumen_tiene_su_motivo(tmp_path, monkeypatch):
     with pytest.raises(ReportError) as exc:
         lab.generate()
     assert exc.value.reason == "summary_jargon" and lab.files() == []
+
+
+def test_activo_fuera_del_alcance_no_se_publica(tmp_path):
+    """El grafo lo escribe quien relevó: un activo marcado en alcance que no está en el
+    laboratorio o en el RoE (o está excluido) no aparece en la sección 3."""
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    for host in ("juiceshop.lab.test", "app.example.com"):
+        lab.graph.add("domain", host, source_tool="x", iteration=1)
+    lab.graph.add("http_service", "http://203.0.113.7/", source_tool="x", iteration=1)
+    doc = json.loads(lab.generate().path.read_bytes())
+    (gathering,) = [s["content"] for s in doc["sections"] if "assets" in s["content"]]
+    assert [a["host"] for a in gathering["assets"]] == ["dvwa.lab.test"]
+    assert "app.example.com" not in json.dumps(doc) and "203.0.113.7" not in json.dumps(doc)
