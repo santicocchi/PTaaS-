@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from harness.contracts import AuditIntegrityError, Result
+from harness.contracts import AuditIntegrityError
 from harness.engagement import State
 from harness.reporting import ReportError
 from tests.reporting.helpers import Lab
@@ -55,7 +55,8 @@ def test_cadena_rota(tmp_path):
 def test_engagement_fuera_de_report(tmp_path, state, reason):
     lab = Lab(tmp_path, state=State.REPORT)
     if state == State.DELIVERED:
-        lab.engagement.approve("before_deliver")
+        from harness.engagement import _DELIVERY_GRANT
+        lab.engagement.grant_delivery(_DELIVERY_GRANT)
         lab.engagement.advance()
     else:
         lab.engagement.state = state
@@ -117,12 +118,13 @@ def test_hallazgo_sin_par_no_desaparece(tmp_path, side):
 
 def test_bitacora_con_entrega_aunque_el_estado_diga_report(tmp_path):
     """El Engagement no persiste: la bitácora manda."""
+    from tests.reporting.helpers import in_state
     lab = Lab(tmp_path)
     lab.finding("f-1")
     lab.generate()
-    lab.audit.record_control(lab.eng, "report-delivery", "report.delivered", lab.eng,
-                             Result.OK, evidence="exports/eng-1/dd.json#sha256=" + "0" * 64,
-                             subject="report-v1")
+    lab.decide_delivery()
+    lab.deliver()
+    lab.engagement = in_state(State.REPORT)              # recién armado: no sabe nada
     with pytest.raises(ReportError) as exc:
         lab.generate()
     assert exc.value.reason == "engagement_delivered"

@@ -35,6 +35,15 @@ class RoEError(ValueError):
 
 
 @dataclass(frozen=True)
+class ReportDestination:
+    """Destino del informe (007, D15): DefectDojo en la red `tools` del laboratorio."""
+    host: str
+    ip: str                       # una sola IP (el RoE la escribe como IP o como CIDR /32)
+    port: int
+    dd_engagement_id: int         # id del engagement en DefectDojo
+
+
+@dataclass(frozen=True)
 class RoE:
     engagement_id: str
     cidrs: tuple[str, ...]
@@ -47,6 +56,8 @@ class RoE:
     digest: str
     # change 005: criticidad opcional por host (1..5); un host sin entrada vale 3.
     criticality: tuple[tuple[str, int], ...] = ()
+    # change 007: destinos del informe; vacío = entrega como archivo (modo offline).
+    report_destinations: tuple[ReportDestination, ...] = ()
     # Fuente validada: el emisor vuelve a parsearla y no confía en los demás campos.
     source: dict[str, Any] = field(compare=False, repr=False, default_factory=dict)
 
@@ -67,6 +78,65 @@ def roe_digest(data: dict[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(_canon(body), sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def _destination_targets() -> tuple[list[ipaddress.IPv4Network | ipaddress.IPv6Network],
+                                    list[str]]:
+    targets = yaml.safe_load(_PROFILES.read_text(encoding="utf-8"))["targets"]
+    return ([ipaddress.ip_network(c) for c in targets["report_destination_cidrs"]],
+            [d.lower() for d in targets["report_destination_domains"]])
+
+
+def _parse_destinations(raw: Any, errors: list[str]) -> tuple[ReportDestination, ...]:
+    """`report_destinations` (007): solo hosts e IP de la red de herramientas de profiles.yaml.
+    Por ahora un solo destino: la entrega registra un único `report.delivered`."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        errors.append("report_destinations: debe ser una lista")
+        return ()
+    if len(raw) > 1:
+        errors.append("report_destinations: por ahora se admite un solo destino")
+        return ()
+    cidrs, domains = _destination_targets()
+    out: list[ReportDestination] = []
+    for i, item in enumerate(raw):
+        where = f"report_destinations[{i}]"
+        if not isinstance(item, dict) or set(item) != {"host", "ip", "port", "dd_engagement_id"}:
+            errors.append(f"{where}: necesita host, ip, port y dd_engagement_id")
+            continue
+        host = normalize_target(str(item["host"]))
+        if host is None or _is_ip_text(host) or not _in_domains(host, domains):
+            errors.append(f"{where}: el destino {item['host']!r} está fuera de {domains}")
+            continue
+        try:
+            net = ipaddress.ip_network(str(item["ip"]), strict=True)
+        except ValueError:
+            errors.append(f"{where}: IP inválida {item['ip']!r}")
+            continue
+        if net.num_addresses != 1 or not any(
+                net.version == c.version and net.subnet_of(c)  # type: ignore[arg-type]
+                for c in cidrs):
+            errors.append(f"{where}: el destino {item['ip']} no es una IP de "
+                          f"{[str(c) for c in cidrs]}")
+            continue
+        port, dd = item["port"], item["dd_engagement_id"]
+        if type(port) is not int or not 1 <= port <= 65535:
+            errors.append(f"{where}: puerto inválido {port!r}")
+            continue
+        if type(dd) is not int or dd < 1:
+            errors.append(f"{where}: dd_engagement_id inválido {dd!r}")
+            continue
+        out.append(ReportDestination(host, str(net.network_address), port, dd))
+    return tuple(out)
+
+
+def _is_ip_text(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
 
 
 def _lab_targets() -> tuple[list[ipaddress.IPv4Network | ipaddress.IPv6Network], list[str]]:
@@ -189,6 +259,7 @@ def _parse(source: str | dict[str, Any]) -> RoE:
         errors.append("emergency_contacts: cada contacto necesita name y channel")
 
     criticality = _parse_criticality(data.get("criticality"), cidrs, domains, errors)
+    destinations = _parse_destinations(data.get("report_destinations"), errors)
 
     approval = _as_dict(data.get("approval"), "approval", errors)
     if approval and not approval.get("approver"):
@@ -206,7 +277,7 @@ def _parse(source: str | dict[str, Any]) -> RoE:
     return RoE(engagement_id=str(eng), cidrs=tuple(cidrs), domains=tuple(domains),
                excluded=tuple(excluded), window_start=start, window_end=end,
                phases=frozenset(phases), approver=str(approval["approver"]), digest=digest,
-               criticality=criticality, source=data)
+               criticality=criticality, report_destinations=destinations, source=data)
 
 
 DEFAULT_CRITICALITY = 3

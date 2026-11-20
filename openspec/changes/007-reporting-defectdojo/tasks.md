@@ -10,13 +10,13 @@
 - [x] 2.2 Construcción del informe con referencias a evidencia en bitácora
 - [x] 2.3 Validación de vectores CVSS v4.0 y presentación junto a EPSS
 - [x] 2.4 Resumen ejecutivo y estructura PTES §7
-- [ ] 2.5 Exportación a DefectDojo o a su formato de importación
-- [ ] 2.6 Gate de entrega conectado a la CLI de aprobación
+- [x] 2.5 Exportación a DefectDojo o a su formato de importación
+- [x] 2.6 Gate de entrega conectado a la CLI de aprobación
 
 ## Verificación
 - [x] 3.1 Test: hallazgo sin CWE/CVSS/remediación → falla indicando el campo
 - [x] 3.2 Test: estado "validado" vs "no validado" visible en el informe
-- [ ] 3.3 Test: entrega sin aprobación → rechazada
+- [x] 3.3 Test: entrega sin aprobación → rechazada
 - [x] 3.4 Test: el informe no contiene datos sensibles del lab (lista de patrones)
 - [ ] 3.5 Recorrido end-to-end con un solo comando contra el lab
 - [ ] 3.6 Archivar el delta en `openspec/specs/reporting/spec.md`

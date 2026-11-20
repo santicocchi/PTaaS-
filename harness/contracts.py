@@ -110,11 +110,20 @@ REPORT_GENERATED_ACTION = "report.generated"
 REPORT_FAILED_ACTION = "report.generation_failed"
 REPORT_DELIVERY_ACTION = "report.delivery"
 REPORT_DELIVERED_ACTION = "report.delivered"
+APPROVE_DELIVERY_ACTION = "hitl.approve_delivery"
+REJECT_DELIVERY_ACTION = "hitl.reject_delivery"
+REPORT_ACTIONS = frozenset({REPORT_GENERATED_ACTION, "report.generation_failed",
+                            "report.delivery", REPORT_DELIVERED_ACTION,
+                            APPROVE_DELIVERY_ACTION, REJECT_DELIVERY_ACTION})
 REPORT_FAILURE_REASONS = frozenset({
     "missing_cwe", "invalid_cvss_vector", "missing_remediation", "invalid_catalog_entry",
     "evidence_mismatch", "validation_mismatch", "finding_mismatch", "sensitive_data",
     "summary_jargon", "not_lab_target", "out_of_scope", "engagement_not_in_report",
     "engagement_delivered", "version_conflict", "internal_error"})
+# `report.delivery` ABORTED: por qué no se entregó (kill switch o fallo de la exportación).
+DELIVERY_FAILURE_REASONS = frozenset({"killswitch", "sensitive_data", "evidence_mismatch",
+                                      "timeout", "exec_error", "invalid_output",
+                                      "adapter_error", "out_of_scope"})
 REPORT_SUBJECT_RE = re.compile(r"^report-v[1-9][0-9]{0,5}\Z")
 
 Resolver = Callable[[str], list[str]]
@@ -166,15 +175,20 @@ class Guard:
 
     def __init__(self, phase_allowlist: dict[Phase, set[str]],
                  approvals: set[ApprovalKey] | None = None,
-                 hitl_phases: set[Phase] | None = None):
+                 hitl_phases: set[Phase] | None = None,
+                 hitl_capabilities: set[str] | None = None):
+        from harness.policy_loader import hitl_capabilities as policy_hitl_capabilities
         from harness.policy_loader import hitl_phases as policy_hitl_phases
         self.phase_allowlist = phase_allowlist
         self._approvals: set[ApprovalKey] = approvals or set()
         # Lo decide la política, no el agente que arma la Action (red team R13).
         self.hitl_phases = policy_hitl_phases() if hitl_phases is None else hitl_phases
+        self.hitl_capabilities = (policy_hitl_capabilities() if hitl_capabilities is None
+                                  else hitl_capabilities)
 
     def needs_approval(self, action: Action, token: ScopeToken) -> bool:
-        return action.requires_human_approval or token.phase in self.hitl_phases
+        return (action.requires_human_approval or token.phase in self.hitl_phases
+                or action.name in self.hitl_capabilities)
 
     @staticmethod
     def _key(action_name: str, target: str, engagement_id: str, phase: Phase,
@@ -283,24 +297,39 @@ def entry_hash(entry: Entry) -> str:
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 
-def _check_report_record(action: str, result: Result, reason: str | None,
+# Archivo que respalda cada registro del informe con evidencia (por `subject` = report_id).
+_REPORT_EVIDENCE = {REPORT_GENERATED_ACTION: "reports/{e}/{s}.json",
+                    REPORT_DELIVERED_ACTION: "reports/{e}/delivered-{s}.json",
+                    APPROVE_DELIVERY_ACTION: "approvals/{e}/{s}",
+                    REJECT_DELIVERY_ACTION: "approvals/{e}/{s}"}
+
+
+def _check_report_record(action: str, agent: str, result: Result, reason: str | None,
                          evidence: str | None, subject: str | None, engagement: str) -> None:
     """Forma de los registros del informe (007, delta de audit-log)."""
     if subject is None:
         raise ValueError(f"{action} necesita subject")
     if action != REPORT_FAILED_ACTION and not REPORT_SUBJECT_RE.match(subject):
         raise ValueError(f"{action} lleva como subject un informe report-v<N>: {subject!r}")
-    if action == REPORT_GENERATED_ACTION and evidence is not None \
-            and evidence.split("#sha256=", 1)[0] != f"reports/{engagement}/{subject}.json":
-        raise ValueError(f"{action}: la evidencia debe ser reports/{engagement}/{subject}.json")
-    if action == REPORT_FAILED_ACTION:
+    expected = _REPORT_EVIDENCE.get(action)
+    if expected is not None and evidence is not None \
+            and evidence.split("#sha256=", 1)[0] != expected.format(e=engagement, s=subject):
+        raise ValueError(f"{action}: la evidencia debe ser {expected.format(e=engagement, s=subject)}")
+    if action in (APPROVE_DELIVERY_ACTION, REJECT_DELIVERY_ACTION):
+        if result is not Result.OK or evidence is None or reason is not None \
+                or not agent.startswith("reviewer:") or len(agent) == len("reviewer:"):
+            raise ValueError(f"{action} va OK, de reviewer:<nombre>, con evidencia y sin motivo")
+    elif action == REPORT_FAILED_ACTION:
         if result is not Result.ABORTED or reason not in REPORT_FAILURE_REASONS:
             raise ValueError(f"fallo de informe inválido: {result.value} {reason!r}")
     elif action in (REPORT_GENERATED_ACTION, REPORT_DELIVERED_ACTION):
         if result is not Result.OK or evidence is None or reason is not None:
             raise ValueError(f"{action} va OK, con evidencia y sin motivo")
-    elif result not in (Result.PENDING_HITL, Result.ABORTED) or reason is not None:
-        raise ValueError(f"{action} va PENDING_HITL o ABORTED, sin motivo")
+    elif result is Result.PENDING_HITL:
+        if reason is not None:
+            raise ValueError(f"{action} PENDING_HITL va sin motivo")
+    elif result is not Result.ABORTED or reason not in DELIVERY_FAILURE_REASONS:
+        raise ValueError(f"{action} va PENDING_HITL, o ABORTED con motivo: {reason!r}")
 
 
 def make_entry(*, prev: str, engagement: str, agent: str, action: str, target: str,
@@ -312,11 +341,11 @@ def make_entry(*, prev: str, engagement: str, agent: str, action: str, target: s
         "action": action, "target": target, "phase": phase,
         "result": result.value, "prev": prev,
     }
-    if action in (REPORT_GENERATED_ACTION, REPORT_FAILED_ACTION, REPORT_DELIVERY_ACTION,
-                  REPORT_DELIVERED_ACTION):
-        _check_report_record(action, result, reason, evidence, subject, engagement)
-    if action == REPORT_FAILED_ACTION:
-        body["reason"] = reason
+    if action in REPORT_ACTIONS:
+        _check_report_record(action, agent, result, reason, evidence, subject, engagement)
+    if action in (REPORT_FAILED_ACTION, REPORT_DELIVERY_ACTION):
+        if reason is not None:             # ya validado por _check_report_record
+            body["reason"] = reason
     elif action == VALIDATION_CLOSED_ACTION:
         if result is not Result.ABORTED or reason not in VALIDATION_CLOSE_REASONS:
             raise ValueError(f"cierre de validación inválido: {result.value} {reason!r}")

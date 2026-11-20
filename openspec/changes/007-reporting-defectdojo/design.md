@@ -220,11 +220,14 @@ Se reutiliza el mecanismo de 006 (D5, D6), con un sujeto distinto: el `report_id
 - **La bitácora manda:** la decisión vigente es el control `hitl.*_delivery` más nuevo para ese `report_id` y la única fila que respalda. Una fila sin control no habilita nada (006 M1).
 - **Vencimiento:** `gates_hitl` `before: deliver` gana `approval_ttl_minutes` (60). Vencida vale lo mismo que ninguna. Nunca se aprueba por defecto ni por tiempo.
 - **Sin aprobación:** `deliver` registra el control `report.delivery` PENDING_HITL con `subject` = `report_id`, lanza `DeliveryNotApproved` y el engagement queda en REPORT. Esto reemplaza al `deliver(report, reviewer_approved: bool)` actual: ningún llamador puede declarar la aprobación con un booleano.
+- **Implementación:** `harness/delivery.py` (`deliver`, `check_delivery_decision`, `record_delivery_decision`), la tabla en `harness/approvals.py` y el subcomando `report` de `harness/review.py`. `report list` muestra el estado (`pending`, `approved`, `rejected`, `expired` o `delivered`).
+- **Resumen de la entrega:** `report.delivered` apunta a `reports/<engagement>/delivered-<report_id>.json`, que guarda el `report_id`, el SHA-256 del informe, el modo, el destino, la referencia de la exportación y la de la aprobación. Así `--previous` (D10) puede comprobar que lo entregado es exactamente esa versión.
+- **Fallos de la entrega:** `report.delivery` ABORTED con motivo (`killswitch`, `sensitive_data`, `evidence_mismatch`, `timeout`, `exec_error`, `invalid_output`, `adapter_error`, `out_of_scope`). `out_of_scope` cubre el token de REPORT que no se emite y el bloqueo del Guard en el envío; el motivo exacto queda en el `token.issue` o la acción BLOCKED. Las precondiciones sin intento (engagement fuera de REPORT, `report.delivered` ya en la bitácora, ningún informe generado) se rechazan sin registro: no hubo acción. La bitácora manda: si ya hay `report.delivered`, no se vuelve a entregar aunque el estado en memoria sea REPORT. El kill switch se vuelve a mirar después del envío.
 
 ### D15. Exportación a DefectDojo por `Harness.invoke`
 `harness/adapters/defectdojo_adapter.py` define `DefectDojoExport`: `name = "defectdojo.export"`, `allowed_phases = (Phase.REPORT,)`, `destructive = False`, con `run_subject(action, target, token, addresses, subject)`.
 
-- **El destino lo autoriza el RoE.** El RoE gana `report_destinations` (host, IP o CIDR /32, puerto, id del engagement en DefectDojo), contenido en `targets.report_destination_domains` / `report_destination_cidrs` de `profiles.yaml` (la red `tools`, 10.97.0.0/24). El emisor arma el token de REPORT con **solo** esos destinos como alcance, no con los objetivos: en REPORT ninguna acción puede tocar un objetivo del laboratorio (I4). El Guard no cambia: decide por el token, igual que siempre.
+- **El destino lo autoriza el RoE.** El RoE gana `report_destinations` (por ahora uno solo: `host`, `ip` como IP o CIDR /32, `port` y `dd_engagement_id`), contenido en `targets.report_destination_domains` / `report_destination_cidrs` de `profiles.yaml` (la red `tools`, 10.97.0.0/24). El emisor arma el token de REPORT con **solo** esos destinos como alcance, no con los objetivos: en REPORT ninguna acción puede tocar un objetivo del laboratorio (I4). El Guard no cambia: decide por el token, igual que siempre.
 - **El gate lo decide la política.** `gates_hitl` `before: deliver` gana `capabilities: [defectdojo.export]` y `Guard.needs_approval` lo consulta, sin importar lo que declare la Action (009 R13). Sin `subject`: `missing_subject`.
 - **Envío atado a lo aprobado.** Como en 006, el orquestador de entrega carga la aprobación en el Guard solo para ese envío y la retira después, y le pasa al adaptador el `report_id` y el SHA-256 aprobados. El adaptador vuelve a leer el archivo, verifica el SHA-256 y arma la exportación desde ese archivo; si no coincide, no envía.
 - **Una sola llamada fija:** `POST /api/v2/import-scan/` con `scan_type=Generic Findings Import`, el id de engagement del RoE, `close_old_findings=false` y el archivo de D12. A la IP fijada por el Harness, con `Host: <nombre>`, sin redirecciones, con timeout (`reporting.defectdojo.timeout_s`), respuesta acotada (`max_response_bytes`) y sin variables de proxy.
@@ -239,7 +242,7 @@ Si el RoE no tiene `report_destinations`, la entrega escribe `state/reports/<eng
 - **Rechazado:** pasar el modo offline por `Harness.invoke` con un objetivo ficticio. Ensuciaría el Guard con un objetivo que no existe.
 
 ### D17. Cierre REPORT → DELIVERED
-`Engagement.advance()` a DELIVERED exige `before_deliver`. Ese permiso ya no se otorga con `engagement.approve("before_deliver")` desde cualquier lado: lo otorga `deliver()` solo después de (1) verificar la cadena, (2) confirmar que el kill switch no está activo, (3) confirmar la aprobación auditada de D14 para la última versión y su SHA-256 y (4) registrar `report.delivered` OK. Si cualquier paso falla, el estado queda en REPORT.
+`Engagement.advance()` a DELIVERED exige `before_deliver`. Ese permiso ya no se otorga con `engagement.approve("before_deliver")` (lanza `TransitionError`): `Engagement.grant_delivery()` solo lo acepta con una marca que importa `harness/delivery.py`, y un test controla que nadie más en `harness/` la use. lo otorga `deliver()` solo después de (1) verificar la cadena, (2) confirmar que el kill switch no está activo, (3) confirmar la aprobación auditada de D14 para la última versión y su SHA-256 y (4) registrar `report.delivered` OK. Si cualquier paso falla, el estado queda en REPORT.
 
 - **Kill switch activo:** `report.delivery` ABORTED, sin exportar.
 - **Cadena rota:** `AuditIntegrityError`, el engagement pasa a ABORTED (008), sin exportar.
@@ -261,6 +264,13 @@ Si el RoE no tiene `report_destinations`, la entrega escribe `state/reports/<eng
 - **Patrones de redacción:** una lista fija no detecta todo; por eso la exportación es por lista permitida (D12) y el informe falla ante una coincidencia en lugar de entregar.
 - **Identidad del Reviewer:** sigue siendo texto libre sin autenticación (riesgo aceptado en 006).
 - **DefectDojo sin instancia en el laboratorio:** el modo API se prueba contra un servidor HTTP falso en el test; el recorrido real queda para cuando haya instancia (ver Preguntas abiertas).
+- **Riesgos aceptados de la entrega (revisión de seguridad del PR 2):**
+  - la clave viaja por HTTP en claro dentro de la red `tools` del laboratorio; con una instancia fuera del laboratorio hay que pasar a HTTPS con el SNI y el Host fijados;
+  - `timeout_s` acota cada operación del socket, no la conexión entera; cada lectura sigue acotada por `max_response_bytes`;
+  - el Guard acepta subdominios de `allowed_domains`; la IP fija /32 sigue siendo el único destino posible;
+  - `_INTERNAL_RE` tiene la red `10.97.x` escrita a mano: es defensa en profundidad, la protección principal es la lista permitida;
+  - el gate en el Harness es la aprobación en memoria del Guard (mismo diseño que el 006); `deliver()` es el único lugar que la otorga y la retira;
+  - `DeliveryContext.clock` es inyectable para los tests.
 
 ## Preguntas abiertas
 1. ~~**Cálculo del puntaje CVSS v4.0**~~ Resuelta el 2026-11-20: biblioteca `cvss==3.4` fijada (D4). La validación del vector sigue siendo propia.

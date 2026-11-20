@@ -2,23 +2,30 @@
 from __future__ import annotations
 
 import copy
+import time
 from datetime import UTC, datetime
 
 from demo.checkpoint1 import prepare_roe
 from demo.pipeline import ROE_TEMPLATE
+from harness.adapters.defectdojo_adapter import DefectDojoExport
 from harness.analysis import FindingStore, Observation
 from harness.approvals import ApprovalStore
 from harness.assets import AssetGraph
 from harness.audit import SqliteAuditLog
-from harness.contracts import Result
+from harness.contracts import Guard, Harness, KillSwitch, Result
+from harness.delivery import DeliveryContext, deliver, latest_report, record_delivery_decision
 from harness.engagement import Engagement, State
 from harness.evidence import build_evidence, write_evidence
+from harness.policy_loader import phase_allowlist
 from harness.report_catalog import ReportCatalog
 from harness.reporting import ReportContext, generate_report
-from harness.roe import parse_roe
+from harness.roe import parse_roe, roe_digest
 from harness.schemas import CandidateFinding, PrioritizedVuln
+from harness.tokens import TokenIssuer
 
 ENG = "eng-1"
+DD_HOST, DD_IP, DD_PORT = "defectdojo.tools.test", "10.97.0.20", 8080
+DESTINATION = {"host": DD_HOST, "ip": f"{DD_IP}/32", "port": DD_PORT, "dd_engagement_id": 3}
 HIGH = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N"      # 8.7 High
 MEDIUM = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N"    # 5.1 Medium
 LOW = "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:A/VC:N/VI:L/VA:N/SC:L/SI:L/SA:N"       # 2.1 Low
@@ -53,7 +60,8 @@ def in_state(state):
 
 
 class Lab:
-    def __init__(self, tmp_path, entries=None, state=State.REPORT, eng=ENG):
+    def __init__(self, tmp_path, entries=None, state=State.REPORT, eng=ENG,
+                 destinations=None):
         self.eng = eng
         self.state_dir, self.audit_dir = tmp_path / "state", tmp_path / "audit"
         self.audit = SqliteAuditLog.open(eng, self.audit_dir)
@@ -66,8 +74,19 @@ class Lab:
                        iteration=1)
         self.entries = copy.deepcopy(ENTRIES if entries is None else entries)
         self.engagement = in_state(state)
-        self.roe = parse_roe(prepare_roe(eng, datetime(2026, 11, 20, 12, tzinfo=UTC),
-                                         ROE_TEMPLATE))
+        # Fecha fija para que dos generaciones sean iguales byte a byte. Con destinos hace
+        # falta emitir un token de REPORT de verdad, así que la ventana tiene que incluir ahora.
+        when = (datetime(2026, 11, 20, 12, tzinfo=UTC) if destinations is None
+                else datetime.now(UTC).replace(minute=0, second=0, microsecond=0))
+        data = prepare_roe(eng, when, ROE_TEMPLATE)
+        if destinations is not None:          # 007: destino del informe y fase REPORT
+            data["report_destinations"] = destinations
+            data["phases"] = [*data["phases"], "report"]
+            data["approval"]["roe_sha256"] = roe_digest(data)
+        self.roe = parse_roe(data)
+        self.now = time.time()
+        self.issuer = TokenIssuer(self.audit, key=b"k" * 32)
+        self.connector = None
         self.vulns, self.candidates = [], []
         self.previous = []
 
@@ -126,6 +145,36 @@ class Lab:
 
     def generate(self):
         return generate_report(self.ctx(), self.vulns, self.candidates)
+
+    # -- entrega ---------------------------------------------------------------------------------
+    def latest(self):
+        return latest_report(self.audit.entries, self.eng, self.state_dir)
+
+    def decide_delivery(self, report_id=None, decision="approved", sha=None, ack=False,
+                        reviewer="beto", reason="revisado", at=None):
+        latest = self.latest()
+        return record_delivery_decision(
+            self.approvals, self.audit, self.eng, self.state_dir, report_id or latest.report_id,
+            decision, reviewer, reason, self.now if at is None else at,
+            latest.short if sha is None else sha, ack)
+
+    def harness(self, connector=None, resolver=None):
+        def refuse(ip, port, timeout):            # por defecto, nadie sale a la red
+            raise AssertionError(f"conexión inesperada a {ip}:{port}")
+        adapter = DefectDojoExport(state_dir=self.state_dir,
+                                   connector=connector or self.connector or refuse,
+                                   limits=(2.0, 4096))
+        return Harness(Guard(phase_allowlist()), self.audit, {"defectdojo.export": adapter},
+                       KillSwitch(), self.issuer,
+                       resolver=resolver or (lambda host: [DD_IP]))
+
+    def delivery_ctx(self, harness=None):
+        return DeliveryContext(self.engagement, self.roe, harness or self.harness(),
+                               self.issuer, self.state_dir, self.approvals,
+                               clock=lambda: self.now)
+
+    def deliver(self, harness=None):
+        return deliver(self.delivery_ctx(harness))
 
     def reports_dir(self):
         return self.state_dir / "reports" / self.eng

@@ -6,7 +6,9 @@
   catálogo y parámetros. Si cambia algo, es otra revisión y necesita otra decisión (B1);
 - `decisions`: cada decisión del Reviewer, atada a una revisión. La vigente es la última fila
   del hallazgo: un rechazo posterior revoca una aprobación (M3);
-- `closures`: el cierre de cada hallazgo en VALIDATE (no se vuelve a procesar).
+- `closures`: el cierre de cada hallazgo en VALIDATE (no se vuelve a procesar);
+- `delivery_decisions` (007, D14): cada decisión del Reviewer sobre la entrega de una versión
+  del informe, atada a su SHA-256. Mismo mecanismo que `decisions`, con otro sujeto.
 
 Nunca se aprueba por defecto: sin decisión, el hallazgo queda pendiente. Una aprobación vence
 a los `approval_ttl_minutes` y una vencida vale lo mismo que ninguna. Una aprobación solo
@@ -24,12 +26,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from harness.contracts import SUBJECT_RE, AuditSink, Entry, Result
-from harness.policy_loader import load_policy
+from harness.contracts import (
+    APPROVE_DELIVERY_ACTION,
+    REJECT_DELIVERY_ACTION,
+    REPORT_SUBJECT_RE,
+    SUBJECT_RE,
+    AuditSink,
+    Entry,
+    Result,
+)
+from harness.policy_loader import delivery_ttl_minutes, load_policy
 
 DECISIONS = ("approved", "rejected")
 OUTCOMES = ("validated", "not_validated", "failed")
 CONTROLS = {"approved": "hitl.approve", "rejected": "hitl.reject"}
+DELIVERY_CONTROLS = {"approved": APPROVE_DELIVERY_ACTION, "rejected": REJECT_DELIVERY_ACTION}
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}\Z")
 REVIEWER_RE = re.compile(r"^[\w.@-]{1,64}\Z")
 _ENGAGEMENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}\Z")
 
@@ -45,11 +57,17 @@ CREATE TABLE IF NOT EXISTS closures (
   finding_id TEXT NOT NULL UNIQUE,
   outcome TEXT NOT NULL CHECK (outcome IN ('validated','not_validated','failed')),
   reason TEXT, closed_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS delivery_decisions (
+  report_id TEXT NOT NULL, decision TEXT NOT NULL CHECK (decision IN ('approved','rejected')),
+  reviewer TEXT NOT NULL, reason TEXT NOT NULL, decided_at REAL NOT NULL, expires_at REAL,
+  report_sha256 TEXT NOT NULL, ack_unvalidated_high INTEGER NOT NULL CHECK
+  (ack_unvalidated_high IN (0, 1)));
 """
 _TRIGGERS = "".join(
     f"CREATE TRIGGER IF NOT EXISTS {t}_no_{op.lower()} BEFORE {op} ON {t} "
     f"BEGIN SELECT RAISE(ABORT, 'append-only: {op} prohibido'); END;\n"
-    for t in ("queue", "decisions", "closures") for op in ("UPDATE", "DELETE"))
+    for t in ("queue", "decisions", "closures", "delivery_decisions")
+    for op in ("UPDATE", "DELETE"))
 
 
 class ReviewError(ValueError):
@@ -126,6 +144,45 @@ def _control_backs(e: Entry, engagement_id: str, d: Decision) -> bool:
             and e.get("evidence") == decision_ref(engagement_id, d))
 
 
+@dataclass(frozen=True)
+class DeliveryDecision:
+    report_id: str
+    decision: str
+    reviewer: str
+    reason: str
+    decided_at: float
+    expires_at: float | None
+    report_sha256: str               # la versión exacta que se aprobó (o rechazó)
+    ack_unvalidated_high: bool
+    seq: int = 0                     # fila del registro: cada control respalda UNA fila
+
+
+def delivery_ref(engagement_id: str, d: DeliveryDecision) -> str:
+    body = json.dumps(dataclasses.asdict(d), sort_keys=True).encode("utf-8")
+    return f"approvals/{engagement_id}/{d.report_id}#sha256={hashlib.sha256(body).hexdigest()}"
+
+
+def audited_delivery(store: ApprovalStore, entries: Iterable[Entry], engagement_id: str,
+                     report_id: str) -> DeliveryDecision | None:
+    """La decisión de entrega vigente según la bitácora: el `hitl.*_delivery` más nuevo de
+    ese informe y la única fila que respalda. Un `hitl.approve` o `hitl.reject` de validación
+    no cuenta, aunque tenga el mismo `subject`."""
+    last: Entry | None = None
+    for e in entries:
+        if e.get("engagement") == engagement_id and e.get("phase") == "control" \
+                and e.get("action") in DELIVERY_CONTROLS.values() \
+                and e.get("subject") == report_id and e.get("result") == Result.OK.value:
+            last = e
+    if last is None:
+        return None
+    for d in store.delivery_decisions(report_id):
+        if last.get("action") == DELIVERY_CONTROLS[d.decision] \
+                and last.get("agent") == f"reviewer:{d.reviewer}" \
+                and last.get("evidence") == delivery_ref(engagement_id, d):
+            return d
+    return None
+
+
 def audited_decision(store: ApprovalStore, entries: Iterable[Entry], engagement_id: str,
                      finding_id: str) -> Decision | None:
     """La decisión vigente según la bitácora, no el registro (M1): el control `hitl.*` más nuevo del hallazgo
@@ -146,20 +203,24 @@ def audited_decision(store: ApprovalStore, entries: Iterable[Entry], engagement_
 
 
 class ApprovalStore:
-    def __init__(self, path: Path, ttl_minutes: int | None = None) -> None:
+    def __init__(self, path: Path, ttl_minutes: int | None = None,
+                 delivery_ttl: int | None = None) -> None:
         self.path = path
         self.ttl_s = 60 * (load_review_limits()[1] if ttl_minutes is None else ttl_minutes)
+        self.delivery_ttl_s = 60 * (delivery_ttl_minutes() if delivery_ttl is None
+                                    else delivery_ttl)
         self._con = sqlite3.connect(path, isolation_level=None, timeout=30)
         self._con.executescript(_SCHEMA + _TRIGGERS)
 
     @classmethod
     def open(cls, engagement_id: str, base_dir: Path | str = "state",
-             ttl_minutes: int | None = None) -> ApprovalStore:
+             ttl_minutes: int | None = None,
+             delivery_ttl: int | None = None) -> ApprovalStore:
         if not _ENGAGEMENT_RE.match(engagement_id):
             raise ValueError(f"engagement_id inválido: {engagement_id!r}")
         base = Path(base_dir)
         base.mkdir(parents=True, exist_ok=True)
-        return cls(base / f"{engagement_id}.approvals.sqlite3", ttl_minutes)
+        return cls(base / f"{engagement_id}.approvals.sqlite3", ttl_minutes, delivery_ttl)
 
     def close_connection(self) -> None:
         self._con.close()
@@ -278,6 +339,51 @@ class ApprovalStore:
             d = dataclasses.replace(d, seq=int(cur.lastrowid or 0))
             if on_record is not None:
                 on_record(d, item)
+            self._con.execute("COMMIT")
+        except BaseException:
+            self._con.execute("ROLLBACK")
+            raise
+        return d
+
+    # -- decisiones de entrega (007, D14) ------------------------------------------------
+    def delivery_decisions(self, report_id: str) -> list[DeliveryDecision]:
+        rows = self._con.execute(
+            "SELECT report_id, decision, reviewer, reason, decided_at, expires_at, "
+            "report_sha256, ack_unvalidated_high, rowid FROM delivery_decisions "
+            "WHERE report_id = ? ORDER BY rowid", (report_id,)).fetchall()
+        return [DeliveryDecision(r[0], r[1], r[2], r[3], r[4], r[5], r[6], bool(r[7]), r[8])
+                for r in rows]
+
+    def decide_delivery(self, report_id: str, decision: str, reviewer: str, reason: str,
+                        now: float, report_sha256: str, ack_unvalidated_high: bool,
+                        check: Callable[[], object] | None = None,
+                        on_record: Callable[[DeliveryDecision], object] | None = None
+                        ) -> DeliveryDecision:
+        """Escribe una decisión de entrega en una transacción: `check` valida adentro (nadie
+        decide en el medio) y `on_record` escribe la bitácora antes del COMMIT."""
+        if decision not in DECISIONS:
+            raise ReviewError(f"decisión inválida: {decision!r}")
+        if not REPORT_SUBJECT_RE.match(report_id or ""):
+            raise ReviewError(f"informe inválido: {report_id!r}")
+        if not REVIEWER_RE.match(reviewer or ""):
+            raise ReviewError("reviewer inválido o vacío")
+        if not (reason or "").strip():
+            raise ReviewError("el motivo es obligatorio")
+        if not _SHA256_RE.match(report_sha256 or ""):
+            raise ReviewError("SHA-256 del informe inválido")
+        self._con.execute("BEGIN IMMEDIATE")
+        try:
+            if check is not None:
+                check()
+            expires = now + self.delivery_ttl_s if decision == "approved" else None
+            d = DeliveryDecision(report_id, decision, reviewer, reason.strip(), now, expires,
+                                 report_sha256, ack_unvalidated_high)
+            cur = self._con.execute(
+                "INSERT INTO delivery_decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (*dataclasses.astuple(d)[:7], int(ack_unvalidated_high)))
+            d = dataclasses.replace(d, seq=int(cur.lastrowid or 0))
+            if on_record is not None:
+                on_record(d)
             self._con.execute("COMMIT")
         except BaseException:
             self._con.execute("ROLLBACK")
