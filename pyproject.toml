@@ -3,7 +3,7 @@ name = "ptaas"
 version = "0.1.0"
 description = "Pentest as a Service (autorizado) — swarm de agentes + harness"
 requires-python = ">=3.11"
-dependencies = ["pyyaml>=6"]
+dependencies = ["pyyaml>=6", "cvss==3.4"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff", "mypy", "types-PyYAML"]
