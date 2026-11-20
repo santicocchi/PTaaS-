@@ -12,7 +12,7 @@ from tests.reporting.helpers import Lab
 def report(tmp_path):
     lab = Lab(tmp_path)
     lab.finding("f-1", cwe="CWE-22", cve="CVE-2021-41773", priority=9.0)
-    lab.finding("f-2", cwe="CWE-22", priority=7.0, host="juiceshop.lab.test")
+    lab.finding("f-2", cwe="CWE-22", priority=7.0, asset="asset-dvwa-2")
     lab.finding("f-3", cwe="CWE-693", priority=1.0)
     lab.observe("dvwa.lab.test", "CWE-693", "http://10.99.0.4/", "sin CSP")
     lab.attempt("f-3")
@@ -65,3 +65,30 @@ def test_post_explotacion_y_sin_hora_de_generacion(report):
     assert "no se realiza explotación" in sections["post_exploitation"]["text"]
     assert doc["as_of"] == sections["annex_audit"]["as_of"]
     assert "generated_at" not in json.dumps(doc)
+
+
+@pytest.mark.parametrize("text", ["ver fe80::1", "2001:db8:0:0:0:0:0:1", "en https://x.lab",
+                                  "el archivo data/feeds", "policy.yaml", "10.99.0.5",
+                                  "CWE-79", "CVSS:4.0/AV:N", "#sha256=ab"])
+def test_jerga_que_se_detecta(text):
+    from harness.report_catalog import has_jargon
+    assert has_jargon(text)
+
+
+@pytest.mark.parametrize("text", ["Configurar una política restrictiva.",
+                                  "La reunión es a las 10:30", "Cookie de sesión sin Secure"])
+def test_texto_para_no_tecnicos(text):
+    from harness.report_catalog import has_jargon
+    assert not has_jargon(text)
+
+
+def test_jerga_en_el_resumen_tiene_su_motivo(tmp_path, monkeypatch):
+    from harness import reporting
+    from harness.reporting import ReportError
+    from tests.reporting.helpers import Lab
+    monkeypatch.setattr(reporting, "first_sentence", lambda t: "Ver la ruta /etc/x/ del host.")
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    with pytest.raises(ReportError) as exc:
+        lab.generate()
+    assert exc.value.reason == "summary_jargon" and lab.files() == []

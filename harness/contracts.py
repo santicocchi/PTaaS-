@@ -111,9 +111,11 @@ REPORT_FAILED_ACTION = "report.generation_failed"
 REPORT_DELIVERY_ACTION = "report.delivery"
 REPORT_DELIVERED_ACTION = "report.delivered"
 REPORT_FAILURE_REASONS = frozenset({
-    "missing_cwe", "invalid_cvss_vector", "missing_remediation", "evidence_mismatch",
-    "validation_mismatch", "sensitive_data", "not_lab_target", "engagement_not_in_report",
-    "engagement_delivered"})
+    "missing_cwe", "invalid_cvss_vector", "missing_remediation", "invalid_catalog_entry",
+    "evidence_mismatch", "validation_mismatch", "finding_mismatch", "sensitive_data",
+    "summary_jargon", "not_lab_target", "out_of_scope", "engagement_not_in_report",
+    "engagement_delivered", "version_conflict", "internal_error"})
+REPORT_SUBJECT_RE = re.compile(r"^report-v[1-9][0-9]{0,5}\Z")
 
 Resolver = Callable[[str], list[str]]
 
@@ -282,10 +284,15 @@ def entry_hash(entry: Entry) -> str:
 
 
 def _check_report_record(action: str, result: Result, reason: str | None,
-                         evidence: str | None, subject: str | None) -> None:
+                         evidence: str | None, subject: str | None, engagement: str) -> None:
     """Forma de los registros del informe (007, delta de audit-log)."""
     if subject is None:
         raise ValueError(f"{action} necesita subject")
+    if action != REPORT_FAILED_ACTION and not REPORT_SUBJECT_RE.match(subject):
+        raise ValueError(f"{action} lleva como subject un informe report-v<N>: {subject!r}")
+    if action == REPORT_GENERATED_ACTION and evidence is not None \
+            and evidence.split("#sha256=", 1)[0] != f"reports/{engagement}/{subject}.json":
+        raise ValueError(f"{action}: la evidencia debe ser reports/{engagement}/{subject}.json")
     if action == REPORT_FAILED_ACTION:
         if result is not Result.ABORTED or reason not in REPORT_FAILURE_REASONS:
             raise ValueError(f"fallo de informe inválido: {result.value} {reason!r}")
@@ -307,7 +314,7 @@ def make_entry(*, prev: str, engagement: str, agent: str, action: str, target: s
     }
     if action in (REPORT_GENERATED_ACTION, REPORT_FAILED_ACTION, REPORT_DELIVERY_ACTION,
                   REPORT_DELIVERED_ACTION):
-        _check_report_record(action, result, reason, evidence, subject)
+        _check_report_record(action, result, reason, evidence, subject, engagement)
     if action == REPORT_FAILED_ACTION:
         body["reason"] = reason
     elif action == VALIDATION_CLOSED_ACTION:

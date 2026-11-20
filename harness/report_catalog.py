@@ -24,11 +24,14 @@ TEXT_FIELDS = ("title", "technical_description", "business_impact", "remediation
 REQUIRED = (*TEXT_FIELDS, "references", "cvss_v4_vector", "author", "reviewer", "date")
 _KEY_RE = re.compile(r"^(CVE-[0-9]{4}-[0-9]{4,}|CWE-[1-9][0-9]{0,4})\Z")
 
-# Lo que no puede leer una audiencia no técnica (D8): identificadores, vectores, IP, rutas y
-# referencias a evidencia.
+# Lo que no puede leer una audiencia no técnica (D8): identificadores, vectores, IP (v4 y v6),
+# URL, rutas y referencias a evidencia.
 JARGON_RE = re.compile(
     r"CVE-|CWE-|CVSS:|#sha256=|\b\d{1,3}(?:\.\d{1,3}){3}\b"
-    r"|\b(?:state|evidence|reports|demo|harness)/|(?<![\w])/[\w.-]+/")
+    r"|\b[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}::?[0-9A-Fa-f]{1,4}\b|::[0-9A-Fa-f]{1,4}\b"
+    r"|\b[a-z][a-z0-9+.-]*://"
+    r"|\b(?:state|evidence|reports|demo|harness|data|tests|openspec|audit)/"
+    r"|(?<![\w])/[\w.-]+/|\b[\w-]+\.(?:py|ya?ml|json|sqlite3|md)\b")
 
 
 def has_jargon(text: str) -> bool:
@@ -68,8 +71,13 @@ def entry_problems(key: str, raw: Any) -> list[str]:
     problems = [f for f in REQUIRED if f not in raw]
     if problems:
         return problems
-    reviewer, author = str(raw["reviewer"] or "").strip(), str(raw["author"] or "").strip()
-    if not reviewer or reviewer.lower() == "pendiente" or reviewer == author:
+    for f in ("author", "reviewer", "date", "cvss_v4_vector"):
+        if not isinstance(raw[f], str):       # `date: 2026-11-20` sin comillas es una fecha
+            problems.append(f)
+    reviewer = raw["reviewer"].strip() if isinstance(raw["reviewer"], str) else ""
+    author = raw["author"].strip() if isinstance(raw["author"], str) else ""
+    if not reviewer or reviewer.casefold() == "pendiente" \
+            or reviewer.casefold() == author.casefold():
         problems.append("reviewer")
     for f in TEXT_FIELDS:
         if not isinstance(raw[f], str) or scan(raw[f], f):
@@ -118,7 +126,6 @@ class ReportCatalog:
                                     raw["technical_description"].strip(),
                                     raw["business_impact"].strip(), raw["remediation"].strip(),
                                     tuple(raw["references"]), raw["cvss_v4_vector"],
-                                    str(raw["author"]), str(raw["reviewer"]),
-                                    str(raw["date"])), []
+                                    raw["author"], raw["reviewer"], raw["date"]), []
             problems += found
         return None, sorted(set(problems))

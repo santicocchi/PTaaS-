@@ -8,6 +8,7 @@ from demo.checkpoint1 import prepare_roe
 from demo.pipeline import ROE_TEMPLATE
 from harness.analysis import FindingStore, Observation
 from harness.approvals import ApprovalStore
+from harness.assets import AssetGraph
 from harness.audit import SqliteAuditLog
 from harness.contracts import Result
 from harness.engagement import Engagement, State
@@ -59,6 +60,10 @@ class Lab:
         self.audit.record_control(eng, "scope-guard", "token.issue", "report", Result.OK)
         self.store = FindingStore.open(eng, self.state_dir)
         self.approvals = ApprovalStore.open(eng, self.state_dir)
+        self.graph = AssetGraph.open(eng, self.state_dir)
+        self.graph.add("domain", "dvwa.lab.test", source_tool="subfinder", iteration=1)
+        self.graph.add("http_service", "http://dvwa.lab.test/", source_tool="httpx",
+                       iteration=1)
         self.entries = copy.deepcopy(ENTRIES if entries is None else entries)
         self.engagement = in_state(state)
         self.roe = parse_roe(prepare_roe(eng, datetime(2026, 11, 20, 12, tzinfo=UTC),
@@ -83,14 +88,23 @@ class Lab:
         self.store.add(Observation(host, 2, tool, "10038", cwe, url, "high", "Medium", evidence))
 
     # -- bitácora del loop C ------------------------------------------------------------------
-    def attempt(self, fid, n=1, result="validated", truncated=False, ok=True):
-        doc = build_evidence(finding_id=fid, attempt=n, poc_id="POC-CSP-001", poc_version="1.0.0",
+    def send(self, fid, result=Result.OK, host="dvwa.lab.test"):
+        """El registro write-ahead que deja `Harness.invoke` antes de cada envío del loop C."""
+        self.audit._append(engagement=self.eng, agent="validation-orchestrator",
+                           action="poc_catalog.run_parametrized", target=host, phase="validate",
+                           result=result, reason=None, evidence=None, subject=fid)
+
+    def attempt(self, fid, n=1, result="validated", truncated=False, ok=True, sent=True,
+                doc_fid=None, agent="validation-orchestrator"):
+        if sent:
+            self.send(fid)
+        doc = build_evidence(finding_id=doc_fid or fid, attempt=n, poc_id="POC-CSP-001", poc_version="1.0.0",
                              catalog_version="0.2.0", parameters={"base_url": "http://x"},
                              sandbox_id=f"ptaas-sbx-{'ab' * 16}", request=None, record=None,
                              evaluator="header_missing_csp", canary=None, result=result,
                              detail="d", truncated=truncated)
-        ref = write_evidence(self.state_dir, self.eng, fid, n, doc)
-        self.audit.record_control(self.eng, "validation-orchestrator", "validation.attempt", fid,
+        ref = write_evidence(self.state_dir, self.eng, doc_fid or fid, n, doc)
+        self.audit.record_control(self.eng, agent, "validation.attempt", fid,
                                   Result.OK if ok else Result.ABORTED,
                                   None if ok else "sandbox_error", ref, fid)
         return ref
@@ -107,7 +121,8 @@ class Lab:
         return ReportContext(engagement=self.engagement, roe=self.roe, audit=self.audit,
                              state_dir=self.state_dir, store=self.store,
                              catalog=ReportCatalog.from_entries(self.entries, "c" * 64),
-                             approvals=self.approvals, previous=self.previous)
+                             graph=self.graph, approvals=self.approvals,
+                             previous=self.previous)
 
     def generate(self):
         return generate_report(self.ctx(), self.vulns, self.candidates)

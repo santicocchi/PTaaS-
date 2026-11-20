@@ -3,7 +3,7 @@
 Tests: tests/reporting/test_required_fields.py, tests/reporting/test_cvss4.py, tests/reporting/test_build_from_audit.py, tests/reporting/test_validation_status.py, tests/reporting/test_structure.py, tests/reporting/test_redaction.py, tests/reporting/test_disclosure.py, tests/reporting/test_duplicates.py, tests/reporting/test_versioning.py, tests/reporting/test_defectdojo_export.py, tests/reporting/test_delivery_gate.py, tests/reporting/test_report_review_cli.py
 
 ## MODIFIED Requirement: Hallazgo completo
-Cada hallazgo del informe, salvo los `discarded`, DEBE tener un CWE con la forma `CWE-<n>`, un vector CVSS v4.0 válido y una remediación no vacía, tomados de una entrada revisada de `data/report_catalog.yaml` (por CVE y, si no hay, por CWE). Una entrada sin revisor, con revisor `pendiente` o con revisor igual al autor NO DEBE usarse. Un puntaje CVSS 3.1 NO DEBE convertirse a 4.0. Si falta algún campo, el informe NO DEBE generarse ni escribirse ningún archivo, el error DEBE nombrar cada `finding_id` y cada campo faltante, y DEBE quedar un control `report.generation_failed` por hallazgo y campo.
+Cada hallazgo del informe, salvo los `discarded`, DEBE tener un CWE con la forma `CWE-<n>`, un vector CVSS v4.0 válido y una remediación no vacía, tomados de una entrada revisada de `data/report_catalog.yaml` (por CVE y, si no hay, por CWE). Una entrada sin revisor, con revisor `pendiente` o con revisor igual al autor NO DEBE usarse. Un puntaje CVSS 3.1 NO DEBE convertirse a 4.0. Si falta algún campo, el informe NO DEBE generarse ni escribirse ningún archivo, el error DEBE nombrar cada `finding_id` y cada campo faltante, y DEBE quedar un control `report.generation_failed` por hallazgo y campo. Un hallazgo sin CWE válido ni CVE DEBE nombrar solo el campo `cwe`; una entrada que existe pero no vale DEBE nombrar los campos por los que no vale, con motivo `invalid_catalog_entry` para los que no son `cwe`, `cvss_v4_vector` ni `remediation`.
 
 ### Scenario: hallazgo sin CWE
 - GIVEN un hallazgo con CWE `unknown`
@@ -23,15 +23,15 @@ Cada hallazgo del informe, salvo los `discarded`, DEBE tener un CWE con la forma
 ### Scenario: varios campos faltantes
 - GIVEN dos hallazgos, uno sin CWE y otro sin remediación
 - WHEN se genera el informe
-- THEN el error nombra los dos `finding_id` con su campo y hay dos `report.generation_failed`
+- THEN el error nombra los dos `finding_id` con su campo y hay exactamente dos `report.generation_failed`
 
 ### Scenario: entrada curada sin revisar
 - GIVEN una entrada de `data/report_catalog.yaml` con `reviewer` igual a `author`
 - WHEN se genera el informe con un hallazgo de ese CWE
-- THEN la entrada no se usa y el informe falla nombrando los campos que no tiene
+- THEN la entrada no se usa, el informe falla nombrando el campo `reviewer` y la bitácora tiene `report.generation_failed` con motivo `invalid_catalog_entry`
 
 ## ADDED Requirement: Vector CVSS v4.0 válido y sin LLM
-El vector DEBE validarse con un parser determinista: prefijo `CVSS:4.0/`, las 11 métricas base presentes una vez y en el orden de la especificación de FIRST, métricas opcionales como mucho una vez y en su orden, solo valores permitidos y sin salto de línea final. El puntaje DEBE calcularse desde el vector con el algoritmo de referencia de FIRST y la severidad DEBE salir del puntaje. Cada hallazgo DEBE mostrar vector, puntaje y severidad junto al EPSS con la fecha del snapshot.
+El vector DEBE validarse con un parser determinista: prefijo `CVSS:4.0/`, las 11 métricas base presentes una vez y en el orden de la especificación de FIRST, métricas opcionales como mucho una vez y en su orden, solo valores permitidos y sin salto de línea final. El puntaje DEBE calcularse desde el vector con el algoritmo de referencia de FIRST y la severidad DEBE salir del puntaje. Cada hallazgo DEBE mostrar vector, puntaje, severidad y la nomenclatura de FIRST (`CVSS-B`, `CVSS-BT`, `CVSS-BE` o `CVSS-BTE`) junto al EPSS con la fecha del snapshot.
 
 ### Scenario: vector válido
 - GIVEN el vector `CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N`
@@ -64,7 +64,7 @@ El vector DEBE validarse con un parser determinista: prefijo `CVSS:4.0/`, las 11
 - THEN el primero muestra `0.973` con la fecha del snapshot de feeds y el segundo muestra "sin dato"
 
 ## ADDED Requirement: Informe armado desde los hallazgos y la bitácora
-El informe DEBE construirse desde los `PrioritizedVuln`, los `CandidateFinding` y la bitácora del engagement, con la cadena verificada antes de leerla. Cada referencia de evidencia del informe DEBE ser `ruta#sha256=<hex>` y DEBE verificar contra su archivo. Con la cadena rota, con una evidencia que no verifica, o con el engagement fuera de REPORT, el informe NO DEBE generarse.
+El informe DEBE construirse desde los `PrioritizedVuln`, los `CandidateFinding` y la bitácora del engagement, con la cadena verificada antes de leerla. Cada `PrioritizedVuln` DEBE tener su `CandidateFinding` y al revés, sin repetidos; si no, el informe NO DEBE generarse (`finding_mismatch`). Un hallazgo sobre un host excluido o fuera del alcance del RoE NO DEBE informarse y el informe NO DEBE generarse (`out_of_scope`). Todo fallo de generación con la cadena íntegra DEBE dejar un `report.generation_failed`. Cada referencia de evidencia del informe DEBE ser `ruta#sha256=<hex>` y DEBE verificar contra su archivo. Con la cadena rota, con una evidencia que no verifica, o con el engagement fuera de REPORT, el informe NO DEBE generarse.
 
 ### Scenario: evidencia del loop C en el informe
 - GIVEN un hallazgo con un `validation.attempt` OK cuya evidencia verifica
@@ -81,13 +81,23 @@ El informe DEBE construirse desde los `PrioritizedVuln`, los `CandidateFinding` 
 - WHEN se genera el informe
 - THEN se lanza `AuditIntegrityError` y no se escribe ningún archivo
 
+### Scenario: hallazgo sin par
+- GIVEN un `PrioritizedVuln` sin su `CandidateFinding`
+- WHEN se genera el informe
+- THEN falla con `finding_mismatch` y no se escribe ningún archivo
+
+### Scenario: host excluido por el RoE
+- GIVEN un hallazgo sobre `juiceshop.lab.test`, que el RoE excluye
+- WHEN se genera el informe
+- THEN falla con `out_of_scope` y no se escribe ningún archivo
+
 ### Scenario: engagement fuera de REPORT
 - GIVEN un engagement en VALIDATE
 - WHEN se genera el informe
 - THEN falla con `engagement_not_in_report` y no se escribe ningún archivo
 
 ## ADDED Requirement: Validado y no validado visibles
-El estado de validación de cada hallazgo DEBE salir de la bitácora: `validated` solo con un `validation.attempt` OK del hallazgo cuya evidencia verifica y tiene `result` `validated` y `truncated` falso. Todo otro caso DEBE mostrarse como "no validado" con su motivo (`no_catalog_entry`, `reviewer_rejected`, `reviewer_timeout`, `request_budget_exhausted`, bloqueo del Guard, verificación negativa, error del sandbox, pendiente de revisión o no intentado). Si el registro de aprobaciones dice `validated` y la bitácora no lo respalda, el informe NO DEBE generarse.
+El estado de validación de cada hallazgo DEBE salir de la bitácora: `validated` solo con un `validation.attempt` OK del hallazgo cuya evidencia verifica y tiene `result` `validated` y `truncated` falso. Cada `validation.attempt` DEBE haberlo registrado `validation-orchestrator` después de un `poc_catalog.run_parametrized` OK en fase `validate` con el mismo `subject`, sin más intentos que envíos (si no, `validation_mismatch`), y su evidencia DEBE ser `evidence/<engagement>/<finding_id>-<n>.json` con `finding_id` igual al `subject` (si no, `evidence_mismatch`). Todo otro caso DEBE mostrarse como "no validado" con su motivo (`no_catalog_entry`, `reviewer_rejected`, `reviewer_timeout`, `request_budget_exhausted`, bloqueo del Guard, verificación negativa, error del sandbox, pendiente de revisión o no intentado). Si el registro de aprobaciones dice `validated` y la bitácora no lo respalda, el informe NO DEBE generarse.
 
 ### Scenario: validado en sandbox
 - GIVEN un hallazgo con un intento positivo registrado y su evidencia íntegra
@@ -108,6 +118,16 @@ El estado de validación de cada hallazgo DEBE salir de la bitácora: `validated
 - GIVEN un `validation.attempt` OK cuya evidencia tiene `result` `validated` y `truncated: true`
 - WHEN se genera el informe
 - THEN el hallazgo no aparece como validado
+
+### Scenario: intento sin envío por el Harness
+- GIVEN un `validation.attempt` OK con evidencia positiva y sin un `poc_catalog.run_parametrized` OK previo de ese hallazgo
+- WHEN se genera el informe
+- THEN falla con `validation_mismatch` y no se escribe ningún archivo
+
+### Scenario: evidencia positiva de otro hallazgo
+- GIVEN un intento de `f-1` cuya evidencia es de `f-2` o de otro engagement
+- WHEN se genera el informe
+- THEN falla con `evidence_mismatch` y no se escribe ningún archivo
 
 ### Scenario: cierre validado sin respaldo en la bitácora
 - GIVEN un hallazgo con un cierre `validated` en `closures` y ningún `validation.attempt` positivo en la bitácora
@@ -151,12 +171,27 @@ El informe DEBE tener, en este orden: resumen ejecutivo, introducción (alcance 
 - THEN el informe tiene el `roe_sha256` y la ventana en UTC, y no tiene los contactos ni el nombre del aprobador
 
 ## ADDED Requirement: Sin datos sensibles en el informe
-Todo texto que entra al informe desde herramientas o evidencia DEBE pasar por la redacción, que reemplaza cada coincidencia de la lista de patrones de `harness/redaction.py` por `[redacted:<id>]`. Después, el JSON y el markdown completos DEBEN escanearse con la misma lista: si queda alguna coincidencia, el informe NO DEBE generarse y el error DEBE nombrar el patrón y la sección, nunca el valor. Los SHA-256 de 64 hex y los hashes cortos de 12 hex NO DEBEN tomarse como datos sensibles.
+Todo texto que entra al informe desde herramientas o evidencia DEBE pasar por la redacción, que reemplaza cada coincidencia de la lista de patrones de `harness/redaction.py` por `[redacted:<id>]`. El snapshot `inputs-v<N>.json` DEBE guardar solo las observaciones usadas, con el texto de herramienta ya redactado, y DEBE escanearse antes de escribirse. En el markdown, el texto de una herramienta DEBE ir en una sola línea y como código, sin poder abrir un título ni HTML. Después, el JSON y el markdown completos DEBEN escanearse con la misma lista: si queda alguna coincidencia, el informe NO DEBE generarse y el error DEBE nombrar el patrón y la sección, nunca el valor. Los SHA-256 de 64 hex y los hashes cortos de 12 hex NO DEBEN tomarse como datos sensibles.
 
 ### Scenario: cookie con valor en la evidencia de una herramienta
 - GIVEN una observación de ZAP cuya evidencia contiene `Set-Cookie: PHPSESSID=abc123; HttpOnly`
 - WHEN se genera el informe
 - THEN el informe no contiene `abc123` y contiene `[redacted:`
+
+### Scenario: snapshot de entradas redactado
+- GIVEN la misma observación de ZAP y otra de un CWE sin hallazgo
+- WHEN se genera el informe
+- THEN `inputs-v1.json` no contiene `abc123` ni la observación que no se usa
+
+### Scenario: cookie con varios pares
+- GIVEN `Cookie: lang=es; sid=s3cr3t`
+- WHEN se redacta
+- THEN la salida no contiene `s3cr3t`
+
+### Scenario: evidencia con markdown o HTML
+- GIVEN una evidencia con `<script>` y un salto de línea seguido de `# 9.`
+- WHEN se genera el informe
+- THEN el markdown no tiene un título `# 9.` y el texto queda como código en línea
 
 ### Scenario: lista de patrones
 - GIVEN un texto por patrón con `Authorization: Basic YWRtaW46cGFzc3dvcmQ=`, `Bearer eyJhbGciOi...`, un JWT, `password=s3cret`, `http://dvwa.lab.test/x?token=s3cret`, una clave PEM, `AKIAABCDEFGHIJKLMNOP`, `admin@juice-sh.op`, el MD5 `5f4dcc3b5aa765d61d8327deb882cf99`, un canario `ptaas1a2b3c4d` y `admin:password`
@@ -215,7 +250,7 @@ Cada hallazgo DEBE tener una huella determinista `fp1-<32 hex>` calculada solo d
 - THEN se rechaza y el informe no se genera
 
 ## ADDED Requirement: Versiones inmutables y reproducibles
-Cada informe DEBE escribirse como `report-v<N>.json` sin sobrescribir, con `N` igual a 1 más la cantidad de `report.generated` del engagement en la bitácora, y DEBE registrarse en la bitácora con `report.generated`, su referencia `ruta#sha256` y `subject` `report-v<N>`. El informe NO DEBE contener la hora de generación: su `as_of` DEBE ser la del registro `audit_seq`. Una versión nueva DEBE indicar la que reemplaza y los cambios por huella. `python -m harness.reporting reproduce` DEBE reconstruir la versión desde la bitácora hasta `audit_seq` y las entradas con hash, y salir con 0 solo si el JSON y el markdown coinciden byte a byte.
+Cada informe DEBE escribirse como `report-v<N>.json` sin sobrescribir, con `N` igual a 1 más la cantidad de `report.generated` del engagement en la bitácora, y DEBE registrarse en la bitácora con `report.generated`, su referencia `ruta#sha256` y `subject` `report-v<N>`. El informe NO DEBE contener la hora de generación: su `as_of` DEBE ser la del registro `audit_seq`. Una versión nueva DEBE indicar la que reemplaza y los cambios por huella. Con un `report.delivered` OK en la bitácora del engagement NO DEBE generarse otra versión, aunque el estado en memoria sea REPORT. `python -m harness.reporting reproduce` DEBE reconstruir la versión desde la bitácora hasta `audit_seq` y las entradas con hash, y salir con 0 solo si el JSON y el markdown coinciden byte a byte.
 
 ### Scenario: reproducción exacta
 - GIVEN `report-v1` generado y registros agregados a la bitácora después
@@ -240,7 +275,12 @@ Cada informe DEBE escribirse como `report-v<N>.json` sin sobrescribir, con `N` i
 ### Scenario: archivo de la versión ya existente
 - GIVEN un `report-v1.json` presente en disco sin `report.generated` en la bitácora
 - WHEN se genera el informe
-- THEN falla sin sobrescribir el archivo
+- THEN falla sin sobrescribir el archivo y queda un `report.generation_failed` con motivo `version_conflict`
+
+### Scenario: entrega registrada con el estado en memoria en REPORT
+- GIVEN `report-v1` con `report.delivered` OK en la bitácora y un `Engagement` recién armado en REPORT
+- WHEN se genera el informe
+- THEN falla con `engagement_delivered` y no se escribe `report-v2`
 
 ## ADDED Requirement: Exportación a DefectDojo por lista permitida
 La exportación DEBE armarse en formato Generic Findings Import con solo los campos de `DD_FIELDS`, desde el archivo de la versión aprobada y con su SHA-256 verificado. `verified` DEBE ser verdadero solo para hallazgos `validated`; la severidad DEBE salir del puntaje CVSS v4.0 y `unique_id_from_tool` DEBE ser la huella. La exportación NO DEBE contener contenido de evidencia, rutas locales, `sandbox_id`, IP de la red `tools`, parámetros de PoC, canarios, registros de la bitácora, decisiones ni nombres del Reviewer, datos del RoE, tokens, claves, el `rationale` del loop B, el anexo de divulgación ni los hallazgos `discarded`. El documento serializado DEBE escanearse con la lista de redacción y, ante una coincidencia, NO DEBE enviarse ni escribirse.

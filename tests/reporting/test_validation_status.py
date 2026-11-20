@@ -110,3 +110,97 @@ def test_alto_no_validado_se_informa_igual(tmp_path):
     assert [u["fingerprint"] for u in sections["risk_exposure"]["unvalidated_high"]] == [
         first["fingerprint"]]
     assert sections["executive_summary"]["unvalidated_high"] == 1
+
+
+# --- el intento tiene que venir del loop C real (revisión de seguridad B1) -------------------
+def _fails_with(lab, reason):
+    with pytest.raises(ReportError) as exc:
+        lab.generate()
+    assert exc.value.reason == reason and lab.files() == []
+    assert lab.control("report.generation_failed")[-1]["reason"] == reason
+    return exc.value
+
+
+def test_intento_sin_envio_por_el_harness(tmp_path):
+    """Un `validation.attempt` sin el OK write-ahead de `Harness.invoke` no valida nada."""
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.attempt("f-1", sent=False)
+    assert "envío" in str(_fails_with(lab, "validation_mismatch"))
+
+
+def test_mas_intentos_que_envios(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.attempt("f-1", n=1, result="not_validated")
+    lab.attempt("f-1", n=2, sent=False)
+    _fails_with(lab, "validation_mismatch")
+
+
+def test_envio_de_otro_hallazgo_no_cuenta(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.finding("f-2", cwe="CWE-1021")
+    lab.send("f-2")
+    lab.attempt("f-1", sent=False)
+    _fails_with(lab, "validation_mismatch")
+
+
+def test_intento_registrado_por_otro_agente(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.attempt("f-1", agent="report-builder")
+    _fails_with(lab, "validation_mismatch")
+
+
+def test_evidencia_positiva_de_otro_hallazgo(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.finding("f-2", cwe="CWE-1021")
+    lab.attempt("f-1", doc_fid="f-2")          # la evidencia de f-2 colgada de un intento de f-1
+    _fails_with(lab, "evidence_mismatch")
+
+
+def test_evidencia_de_otro_engagement(tmp_path):
+    from harness.contracts import Result
+    from harness.evidence import build_evidence, write_evidence
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    doc = build_evidence(finding_id="f-1", attempt=1, poc_id="POC-CSP-001", poc_version="1.0.0",
+                         catalog_version="0.2.0", parameters={}, sandbox_id="s", request=None,
+                         record=None, evaluator="e", canary=None, result="validated",
+                         detail="d", truncated=False)
+    ref = write_evidence(lab.state_dir, "eng-2", "f-1", 1, doc)
+    lab.send("f-1")
+    lab.audit.record_control(lab.eng, "validation-orchestrator", "validation.attempt", "f-1",
+                             Result.OK, None, ref, "f-1")
+    _fails_with(lab, "evidence_mismatch")
+
+
+def test_archivo_de_evidencia_borrado(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    ref = lab.attempt("f-1")
+    (lab.state_dir / ref.split("#")[0]).unlink()
+    _fails_with(lab, "evidence_mismatch")
+
+
+def test_evidencia_alterada_de_un_intento_abortado(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    ref = lab.attempt("f-1", result="failed", ok=False)
+    path = lab.state_dir / ref.split("#")[0]
+    path.write_text(path.read_text().replace("failed", "validated"))
+    _fails_with(lab, "evidence_mismatch")
+
+
+def test_rechazo_despues_del_pedido(tmp_path):
+    """El pedido quedó PENDING_HITL y después el Reviewer lo rechazó, sin cierre todavía."""
+    from harness.contracts import Result
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.send("f-1", Result.PENDING_HITL)
+    lab.audit.record_control(lab.eng, "reviewer:beto", "hitl.reject", "dvwa.lab.test",
+                             Result.OK, evidence="approvals/eng-1/1#sha256=" + "0" * 64,
+                             subject="f-1")
+    assert _finding(lab.generate())["validation"]["text"] == "validación rechazada por el Reviewer"

@@ -51,12 +51,14 @@ def test_cve_usa_su_entrada_antes_que_la_del_cwe(tmp_path):
 def test_varios_campos_faltantes(tmp_path):
     lab = Lab(tmp_path, entries={"CWE-693": entry(remediation="")})
     lab.finding("f-1", cwe="unknown")
-    lab.finding("f-2", cwe="CWE-693", host="juiceshop.lab.test")
+    lab.finding("f-2", cwe="CWE-693", asset="asset-dvwa-2")
     with pytest.raises(MissingField) as exc:
         lab.generate()
     msg = str(exc.value)
     assert "f-1" in msg and "cwe" in msg and "f-2" in msg and "remediation" in msg
-    assert ("f-1", "missing_cwe") in _failed(lab) and ("f-2", "missing_remediation") in _failed(lab)
+    # Uno por hallazgo y campo: sin CWE no hay entrada que buscar, así que no se suman
+    # el vector ni la remediación de ese hallazgo.
+    assert _failed(lab) == [("f-1", "missing_cwe"), ("f-2", "missing_remediation")]
 
 
 @pytest.mark.parametrize("reviewer", ["ana", "pendiente", "", "Pendiente"])
@@ -65,7 +67,34 @@ def test_entrada_curada_sin_revisar(tmp_path, reviewer):
     lab.finding("f-1")
     with pytest.raises(MissingField) as exc:
         lab.generate()
-    assert {"cvss_v4_vector", "remediation"} <= {n for _, n in exc.value.missing}
+    assert exc.value.missing == [("f-1", "reviewer")]
+    assert _failed(lab) == [("f-1", "invalid_catalog_entry")] and lab.files() == []
+
+
+def test_revisor_igual_al_autor_sin_importar_mayusculas(tmp_path):
+    lab = Lab(tmp_path, entries={"CWE-693": entry(author="ana", reviewer="Ana")})
+    lab.finding("f-1")
+    with pytest.raises(MissingField) as exc:
+        lab.generate()
+    assert exc.value.missing == [("f-1", "reviewer")]
+
+
+def test_fecha_sin_comillas_no_vale(tmp_path):
+    import datetime
+    lab = Lab(tmp_path, entries={"CWE-693": entry(date=datetime.date(2026, 11, 20))})
+    lab.finding("f-1")
+    with pytest.raises(MissingField) as exc:
+        lab.generate()
+    assert exc.value.missing == [("f-1", "date")]
+    assert _failed(lab) == [("f-1", "invalid_catalog_entry")]
+
+
+def test_sin_entrada_para_el_cwe(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1", cwe="CWE-79")
+    with pytest.raises(MissingField) as exc:
+        lab.generate()
+    assert exc.value.missing == [("f-1", "cvss_v4_vector"), ("f-1", "remediation")]
 
 
 def test_vector_curado_invalido(tmp_path):

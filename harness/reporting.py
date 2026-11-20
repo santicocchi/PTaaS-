@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import ipaddress
 import json
@@ -30,8 +31,9 @@ from typing import Any
 from harness.analysis import FindingStore
 from harness.approvals import ApprovalStore
 from harness.assets import AssetGraph
-from harness.audit import SqliteAuditLog, verify_file
+from harness.audit import AuditIntegrityError, SqliteAuditLog, verify_file
 from harness.contracts import (
+    REPORT_DELIVERED_ACTION,
     REPORT_FAILED_ACTION,
     REPORT_GENERATED_ACTION,
     AuditSink,
@@ -47,6 +49,8 @@ from harness.redaction import SensitiveData, redact
 from harness.report_catalog import ROOT, ReportCatalog, first_sentence, has_jargon
 from harness.roe import RoE
 from harness.schemas import CandidateFinding, PrioritizedVuln
+from harness.validation import AGENT as VALIDATION_AGENT
+from harness.validation import ATTEMPT_ACTION, CLOSED_ACTION
 
 GENERATOR_VERSION = "007.1"
 AGENT = "report-builder"
@@ -59,8 +63,11 @@ PROFILES = ROOT / "harness" / "profiles.yaml"
 FEEDS_MANIFEST = ROOT / "data" / "feeds" / "manifest.json"
 CAPABILITY = "poc_catalog.run_parametrized"
 
+# Campo faltante → motivo del `report.generation_failed`. Un campo de la entrada curada que no
+# está acá (título, revisor, fecha...) se registra como `invalid_catalog_entry`.
 FIELD_REASONS = {"cwe": "missing_cwe", "cvss_v4_vector": "invalid_cvss_vector",
                  "remediation": "missing_remediation"}
+HITL_ACTIONS = ("hitl.approve", "hitl.reject")
 CLOSE_TEXT = {"no_catalog_entry": "sin verificación en el catálogo",
               "reviewer_rejected": "validación rechazada por el Reviewer",
               "reviewer_timeout": "no validado por falta de revisión",
@@ -168,8 +175,11 @@ def load_previous(engagement_id: str, report_id: str, state_dir: Path | str,
     finally:
         log.close()
     ref = _generated_refs(entries).get(report_id)
-    delivered = any(e["action"] == "report.delivered" and e["result"] == Result.OK.value
-                    and e.get("subject") == report_id for e in entries)
+    # TODO(007 PR 2, D14): atar el `report.delivered` al SHA-256 de esta versión cuando el
+    # gate de entrega defina su evidencia.
+    delivered = any(e["phase"] == "control" and e["action"] == REPORT_DELIVERED_ACTION
+                    and e["result"] == Result.OK.value and e.get("subject") == report_id
+                    for e in entries)
     if ref is None or not delivered:
         raise PreviousReportError(f"{engagement_id}/{report_id}: no figura entregado")
     if not verify_evidence(state_dir, ref):
@@ -186,38 +196,84 @@ def _ts(ts: float) -> str:
     return datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def validation_of(fids: set[str], entries: list[Entry],
-                  state_dir: Path) -> dict[str, Any]:
-    """Estado de validación de un hallazgo (o de varios con la misma huella)."""
-    mine = [e for e in entries if e.get("subject") in fids]
+def _attempt_doc(e: Entry, subject: str, engagement: str, state_dir: Path) -> dict[str, Any]:
+    """Documento de evidencia de un intento, solo si es de ESE hallazgo y verifica."""
+    ref = e.get("evidence")
+    if not ref:
+        return {}
+    prefix = re.compile(rf"^evidence/{re.escape(engagement)}/{re.escape(subject)}"
+                        r"-[1-9][0-9]*\.json#sha256=")
+    if not prefix.match(ref) or not verify_evidence(state_dir, ref):
+        raise ReportError("evidence_mismatch", f"la evidencia {ref} no verifica", subject)
+    try:
+        doc = json.loads((state_dir / ref.split("#sha256=", 1)[0]).read_bytes())
+    except ValueError as exc:
+        raise ReportError("evidence_mismatch", f"la evidencia {ref} no es JSON",
+                          subject) from exc
+    if not isinstance(doc, dict) or doc.get("finding_id") != subject:
+        raise ReportError("evidence_mismatch", f"la evidencia {ref} es de otro hallazgo", subject)
+    return doc
+
+
+def validation_of(fids: set[str], entries: list[Entry], state_dir: Path,
+                  engagement: str) -> dict[str, Any]:
+    """Estado de validación de un hallazgo (o de varios con la misma huella).
+
+    Un intento cuenta solo si lo registró el orquestador del loop C, después de un envío OK
+    de la capability por `Harness.invoke` (fase validate, mismo hallazgo), y si su evidencia
+    es de ese hallazgo y de este engagement. Si algo no cierra, el informe no se genera.
+    """
     attempts: list[dict[str, Any]] = []
     positive = False
-    for e in mine:
-        if e["action"] != "validation.attempt" or e["phase"] != "control":
+    sent: dict[str, int] = {}
+    used: dict[str, int] = {}
+    last: dict[str, tuple[int, str]] = {}   # último pedido o decisión del Reviewer: (seq, tipo)
+    closed: list[Entry] = []
+    blocked = False
+    for i, e in enumerate(entries):
+        subject = e.get("subject")
+        if subject not in fids:
             continue
-        ref = e.get("evidence")
-        doc: dict[str, Any] = {}
-        if ref:
-            if not verify_evidence(state_dir, ref):
-                raise ReportError("evidence_mismatch", f"la evidencia {ref} no verifica",
-                                  str(e["subject"]))
-            doc = json.loads((state_dir / ref.split("#sha256=", 1)[0]).read_bytes())
-        ok = e["result"] == Result.OK.value
-        is_positive = ok and doc.get("result") == "validated" and doc.get("truncated") is False
-        positive = positive or is_positive
-        attempts.append({"finding_id": e["subject"], "seq": entries.index(e) + 1,
-                         "at": _ts(e["ts"]), "outcome": e["result"],
+        sid = str(subject)
+        action, phase, result = e["action"], e["phase"], e["result"]
+        if action == CAPABILITY and phase == "validate":
+            if result == Result.OK.value:
+                sent[sid] = sent.get(sid, 0) + 1
+            elif result == Result.BLOCKED.value:
+                blocked = True
+            elif result == Result.PENDING_HITL.value:
+                last[sid] = (i, "pending")
+            continue
+        if phase != "control":
+            continue
+        if action in HITL_ACTIONS and result == Result.OK.value:
+            last[sid] = (i, "rejected" if action == "hitl.reject" else "approved")
+            continue
+        if action == CLOSED_ACTION:
+            closed.append(e)
+            continue
+        if action != ATTEMPT_ACTION:
+            continue
+        if e["agent"] != VALIDATION_AGENT:
+            raise ReportError("validation_mismatch",
+                              f"el intento #{i + 1} no lo registró el orquestador", sid)
+        used[sid] = used.get(sid, 0) + 1
+        if used[sid] > sent.get(sid, 0):
+            raise ReportError("validation_mismatch",
+                              f"el intento #{i + 1} no tiene un envío previo por el Harness", sid)
+        doc = _attempt_doc(e, sid, engagement, state_dir)
+        ok = result == Result.OK.value
+        positive = positive or (ok and doc.get("result") == "validated"
+                                and doc.get("truncated") is False)
+        attempts.append({"finding_id": sid, "seq": i + 1,
+                         "at": _ts(e["ts"]), "outcome": result,
                          "result": doc.get("result"), "poc_id": doc.get("poc_id"),
                          "catalog_version": doc.get("catalog_version"),
-                         "truncated": doc.get("truncated"), "evidence": ref})
+                         "truncated": doc.get("truncated"), "evidence": e.get("evidence")})
     if positive:
         return {"status": "validated", "reason": None, "text": "Validado en sandbox",
                 "attempts": attempts}
-    closed = [e for e in mine if e["action"] == "validation.closed"]
-    blocked = [e for e in mine if e["action"] == CAPABILITY
-               and e["result"] == Result.BLOCKED.value]
-    pending = [e for e in mine if e["action"] == CAPABILITY
-               and e["result"] == Result.PENDING_HITL.value]
+    latest = max(last.values(), default=None)
     if closed:
         reason = str(closed[-1].get("reason"))
         text = CLOSE_TEXT.get(reason, reason)
@@ -227,8 +283,12 @@ def validation_of(fids: set[str], entries: list[Entry],
         reason, text = "negative", "verificación negativa"
     elif attempts:
         reason, text = "sandbox_error", "error del sandbox"
-    elif pending:
+    elif latest is not None and latest[1] == "rejected":
+        reason, text = "reviewer_rejected", CLOSE_TEXT["reviewer_rejected"]
+    elif latest is not None and latest[1] == "pending":
         reason, text = "pending_review", "pendiente de revisión"
+    elif latest is not None and latest[1] == "approved":
+        reason, text = "not_attempted", "aprobado, sin intento registrado"
     else:
         reason, text = "not_attempted", "no se intentó validar"
     return {"status": "not_validated", "reason": reason, "text": text, "attempts": attempts}
@@ -245,6 +305,26 @@ def _in_lab(host: str, lab: dict[str, list[str]]) -> bool:
     return any(ip in ipaddress.ip_network(c) for c in lab["cidrs"])
 
 
+def _in_roe(host: str, roe: dict[str, Any]) -> bool:
+    """El host está en el alcance del RoE y no en sus exclusiones."""
+    h = host.lower().rstrip(".")
+    try:
+        ip: ipaddress.IPv4Address | ipaddress.IPv6Address | None = ipaddress.ip_address(h)
+    except ValueError:
+        ip = None
+    for excl in roe["exclusions"]:
+        try:
+            if ip is not None and ip in ipaddress.ip_network(excl, strict=False):
+                return False
+        except ValueError:
+            pass
+        if h == excl.lower().rstrip("."):
+            return False
+    if ip is not None:
+        return any(ip in ipaddress.ip_network(c, strict=False) for c in roe["cidrs"])
+    return any(h == d or h.endswith("." + d) for d in (x.lower() for x in roe["domains"]))
+
+
 def _fmt_score(score: float) -> str:
     return f"{score:.1f}"
 
@@ -255,6 +335,8 @@ def _epss(c: dict[str, Any], epss_date: str | None) -> dict[str, Any]:
     value = f"{float(c['epss']):.3f}"
     if c.get("feed_stale"):
         return {"value": value, "text": f"{value} (dato desactualizado)", "date": epss_date}
+    if epss_date is None:
+        return {"value": value, "text": f"{value} (snapshot sin fecha)", "date": None}
     return {"value": value, "text": f"{value} (snapshot del {epss_date})", "date": epss_date}
 
 
@@ -282,6 +364,7 @@ def _groups(inputs: dict[str, Any]) -> list[_Group]:
 def build(inputs: dict[str, Any], entries: list[Entry], state_dir: Path,
           previous_version: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
     """Informe (JSON canónico como dict) y su markdown. Lanza ReportError."""
+    eng = inputs["engagement_id"]
     seq = int(inputs["audit_seq"])
     if seq < 1 or seq > len(entries):
         raise ValueError("audit_seq fuera de la bitácora")
@@ -296,27 +379,36 @@ def build(inputs: dict[str, Any], entries: list[Entry], state_dir: Path,
     findings: list[dict[str, Any]] = []
     discarded: list[dict[str, Any]] = []
     missing: list[tuple[str, str]] = []
+    order: dict[str, tuple[bool, float, str]] = {}
     for g in sorted(_groups(inputs), key=lambda g: g.fingerprint):
         statuses = {v["status"] for v in g.vulns}
         fids = sorted(v["finding_id"] for v in g.vulns)
         main = min(g.candidates, key=lambda c: c["id"])
-        if statuses == {"discarded"}:
-            discarded.append({"fingerprint": g.fingerprint, "finding_ids": fids,
-                              "host": main["host"], "key": main.get("cve") or main["cwe"],
-                              "false_positive_ids": sorted({i for v in g.vulns for i in
-                                                            _FP_RE.findall(v["rationale"])})})
-            continue
         for c in g.candidates:
             if not _in_lab(c["host"], lab):
                 raise ReportError("not_lab_target", f"{c['host']} no es del laboratorio", c["id"])
+            if not _in_roe(c["host"], inputs["roe"]):
+                raise ReportError("out_of_scope", f"{c['host']} no está en el alcance del RoE",
+                                  c["id"])
+        if statuses == {"discarded"}:
+            # Un descartado con un intento positivo contradice al análisis: se señala.
+            checked = validation_of(set(fids), entries, state_dir, eng)
+            discarded.append({"fingerprint": g.fingerprint, "finding_ids": fids,
+                              "host": main["host"], "key": main.get("cve") or main["cwe"],
+                              "false_positive_ids": sorted({i for v in g.vulns for i in
+                                                            _FP_RE.findall(v["rationale"])}),
+                              "validated_in_sandbox": checked["status"] == "validated"})
+            continue
         cwe = main["cwe"]
         entry, problems = catalog.lookup(main.get("cve"), cwe)
         fid = fids[0]
         if not CWE_RE.match(cwe):
             missing.append((fid, "cwe"))
         if entry is None:
-            missing += [(fid, p) for p in problems if p not in ("cvss_v4_vector", "remediation")]
-            missing += [(fid, "cvss_v4_vector"), (fid, "remediation")]
+            if problems:                   # hay entrada, pero no vale: los campos que fallan
+                missing += [(fid, p) for p in problems]
+            elif CWE_RE.match(cwe) or main.get("cve"):
+                missing += [(fid, "cvss_v4_vector"), (fid, "remediation")]
             continue
         try:
             vector = parse_vector(entry.cvss_v4_vector)
@@ -327,12 +419,10 @@ def build(inputs: dict[str, Any], entries: list[Entry], state_dir: Path,
             missing.append((fid, "remediation"))
         if vector is None or not CWE_RE.match(cwe) or not entry.remediation.strip():
             continue
-        validation = validation_of(set(fids), entries, state_dir)
+        validation = validation_of(set(fids), entries, state_dir, eng)
         score = vector.score
-        feed_score = next((c.get("cvss_score") for c in g.candidates
-                           if c.get("cvss_version") == "4.0" and c.get("cvss_score") is not None),
-                          None)
-        priorities = [v["priority"] for v in g.vulns if v.get("priority") is not None]
+        priorities = [float(v["priority"]) for v in g.vulns if v.get("priority") is not None]
+        order[g.fingerprint] = (not priorities, -max(priorities, default=0.0), fid)
         analysis = ("confirmed" if "confirmed" in statuses else "inconclusive")
         obs = sorted(
             ({"tool": o["tool"], "check": redact(str(o["check_id"])), "url": redact(o["url"]),
@@ -351,12 +441,12 @@ def build(inputs: dict[str, Any], entries: list[Entry], state_dir: Path,
             "business_impact": entry.business_impact, "remediation": entry.remediation,
             "references": [cwe, *entry.references], "catalog_entry": entry.key,
             "cvss_v4_vector": vector.text, "cvss_v4_score": _fmt_score(score),
-            "severity": vector.severity,
+            "cvss_v4_nomenclature": vector.nomenclature, "severity": vector.severity,
             "feed_cvss": None if main.get("cvss_score") is None else {
                 "score": _fmt_score(float(main["cvss_score"])),
                 "version": main.get("cvss_version"),
-                "differs": feed_score is not None and _fmt_score(float(feed_score))
-                != _fmt_score(score)},
+                "differs": main.get("cvss_version") == "4.0"
+                and _fmt_score(float(main["cvss_score"])) != _fmt_score(score)},
             "epss": _epss(main, epss_date),
             "priority": None if not priorities else f"{max(priorities):.2f}",
             "analysis_status": analysis,
@@ -372,8 +462,7 @@ def build(inputs: dict[str, Any], entries: list[Entry], state_dir: Path,
     if missing:
         raise MissingField(sorted(set(missing), key=missing.index))
 
-    findings.sort(key=lambda f: (f["priority"] is None, -float(f["priority"] or 0),
-                                 f["finding_ids"][0]))
+    findings.sort(key=lambda f: order[f["fingerprint"]])     # el float, no el texto redondeado
     _mark_recurrence(findings, inputs["previous"])
     report_id = inputs["report_id"]
     sections = _sections(inputs, entries, findings, discarded, as_of, previous_version)
@@ -389,7 +478,7 @@ def build(inputs: dict[str, Any], entries: list[Entry], state_dir: Path,
     except SensitiveData as exc:
         raise ReportError("sensitive_data", exc.where, report_id) from exc
     if has_jargon(json.dumps(sections[0]["content"], ensure_ascii=False)):
-        raise ReportError("sensitive_data", "el resumen ejecutivo tiene jerga técnica", report_id)
+        raise ReportError("summary_jargon", "el resumen ejecutivo tiene jerga técnica", report_id)
     return report, markdown
 
 
@@ -484,7 +573,7 @@ def _sections(inputs: dict[str, Any], entries: list[Entry], findings: list[dict[
         "annex_audit": {
             "audit_seq": len(entries), "audit_hash": entries[-1]["hash"], "as_of": as_of,
             "results": dict(sorted(results.items())),
-            "verify": f"python -m harness.audit verify <bitácora de {inputs['engagement_id']}>"},
+            "verify": f"python -m harness.audit verify audit/{inputs['engagement_id']}.sqlite3"},
         "annex_evidence": {"refs": sorted({r for f in findings for r in f["evidence"]})},
         "annex_discarded": {"findings": discarded},
         "annex_disclosure": {"advisories": [_advisory(f, entries, inputs) for f in findings]},
@@ -532,6 +621,16 @@ def _advisory(f: dict[str, Any], entries: list[Entry], inputs: dict[str, Any]) -
 
 # ---- markdown (derivado del JSON) ----------------------------------------------------------
 
+def _code(value: Any) -> str:
+    """Texto de una herramienta como código en línea: una sola línea, sin acentos graves.
+
+    Así un `<script>` o un `# 9.` que llegó en la evidencia no se interpreta como HTML ni
+    como título, y no rompe la estructura PTES del markdown.
+    """
+    text = " ".join(str(value).split()).replace("`", "'")
+    return f"`{text}`" if text else "-"
+
+
 def _kv(items: Iterable[tuple[str, Any]]) -> list[str]:
     return [f"- **{k}:** {v}" for k, v in items]
 
@@ -561,8 +660,9 @@ def render_markdown(report: dict[str, Any]) -> str:
             lines += ["", c["note"]]
         elif key == "information_gathering":
             lines += [f"Registros OK de relevamiento en la bitácora: {c['recon_ok_records']}.", ""]
-            lines += [f"- {a['host']}: puertos {', '.join(map(str, a['ports'])) or '-'}; "
-                      f"tecnologías {', '.join(a['technologies']) or '-'}" for a in c["assets"]]
+            lines += [f"- {_code(a['host'])}: puertos {', '.join(map(str, a['ports'])) or '-'}; "
+                      f"tecnologías {', '.join(map(_code, a['technologies'])) or '-'}"
+                      for a in c["assets"]]
         elif key == "vulnerability_assessment":
             for fp in c["findings"]:
                 lines += _finding_md(by_fp[fp])
@@ -571,8 +671,8 @@ def render_markdown(report: dict[str, Any]) -> str:
             for f in c["findings"]:
                 lines.append(f"- {f['fingerprint']}: {f['text']}")
                 lines += [f"  - intento {a['finding_id']} #{a['seq']} ({a['at']}): "
-                          f"{a['outcome']} {a['result'] or '-'}, {a['poc_id'] or '-'}, "
-                          f"{a['evidence'] or 'sin evidencia'}" for a in f["attempts"]]
+                          f"{a['outcome']} {_code(a['result'] or '')}, {_code(a['poc_id'] or '')}"
+                          f", {a['evidence'] or 'sin evidencia'}" for a in f["attempts"]]
         elif key in ("post_exploitation", "conclusion"):
             lines.append(c["text"])
         elif key == "risk_exposure":
@@ -588,13 +688,15 @@ def render_markdown(report: dict[str, Any]) -> str:
         elif key == "annex_evidence":
             lines += [f"- {r}" for r in c["refs"]] or ["- ninguna"]
         elif key == "annex_discarded":
-            lines += [f"- {d['fingerprint']} ({d['host']}): "
+            lines += [f"- {d['fingerprint']} ({_code(d['host'])}): "
                       f"{', '.join(d['false_positive_ids']) or 'descartado por el análisis'}"
+                      + ("; **tiene un intento positivo en sandbox: revisar el descarte**"
+                         if d["validated_in_sandbox"] else "")
                       for d in c["findings"]] or ["- ninguno"]
         elif key == "annex_disclosure":
             for a in c["advisories"]:
                 lines += [f"## {a['id']}: {a['title']}", ""]
-                lines += _kv([("Producto", ", ".join(a["product"]) or "-"),
+                lines += _kv([("Producto", ", ".join(map(_code, a["product"])) or "-"),
                               ("Severidad", (f"{a['severity']['label']} "
                                             f"{a['severity']['score']} ({a['severity']['vector']})")),
                               ("Validación", a["validation"]), ("Remediación", a["remediation"]),
@@ -638,9 +740,10 @@ def _finding_md(f: dict[str, Any]) -> list[str]:
         lines += [f"**No validado: requiere verificación manual** ({v['text']}).", ""]
     rec = f["recurrence"]
     lines += _kv([
-        ("Huella", f["fingerprint"]), ("Host", f["host"]),
+        ("Huella", f["fingerprint"]), ("Host", _code(f["host"])),
         ("Identificadores", ", ".join(x for x in (f["cve"], f["cwe"]) if x)),
-        ("CVSS v4.0", f"{f['cvss_v4_score']} {f['severity']} ({f['cvss_v4_vector']})"),
+        ("CVSS v4.0", (f"{f['cvss_v4_score']} {f['severity']} "
+                       f"({f['cvss_v4_nomenclature']}, {f['cvss_v4_vector']})")),
         ("EPSS", f["epss"]["text"]),
         ("Prioridad", f["priority"] or "sin puntaje"),
         ("Estado", status),
@@ -655,8 +758,9 @@ def _finding_md(f: dict[str, Any]) -> list[str]:
         lines.append(f"- **Recurrencia:** {rec['status']}"
                      + (f" ({rec['engagement']}/{rec['report_id']})"
                         if rec["status"] == "recurring" else ""))
-    lines += [f"- Observación {o['tool']} {o['check']} en {o['url']} ({o['risk']}, "
-              f"{o['confidence']}): {o['evidence'] or '-'}" for o in f["observations"]]
+    lines += [f"- Observación {_code(o['tool'])} {_code(o['check'])} en {_code(o['url'])} "
+              f"({_code(o['risk'])}, {_code(o['confidence'])}): {_code(o['evidence'])}"
+              for o in f["observations"]]
     lines += [f"- Evidencia: {r}" for r in f["evidence"]]
     lines.append("")
     return lines
@@ -672,8 +776,8 @@ class ReportContext:
     state_dir: Path
     store: FindingStore
     catalog: ReportCatalog
-    graph: AssetGraph | None = None
-    approvals: ApprovalStore | None = None
+    graph: AssetGraph                    # activos en alcance para la sección 3 (D5)
+    approvals: ApprovalStore             # cierres del loop C, para `validation_mismatch` (D6)
     previous: list[PreviousReport] = field(default_factory=list)
 
 
@@ -701,14 +805,10 @@ def _roe_summary(roe: RoE) -> dict[str, Any]:
             "roe_sha256": roe.digest, "approver_role": "Reviewer del engagement"}
 
 
-def _assets(graph: AssetGraph | None, hosts: set[str]) -> list[dict[str, Any]]:
-    if graph is None:
-        return []
+def _assets(graph: AssetGraph) -> list[dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for a in graph.assets(in_scope=True):
         h = host_of(a)
-        if h not in hosts:
-            continue
         info = out.setdefault(h, {"host": h, "ports": set(), "technologies": set()})
         if a.type == "http_service":
             from urllib.parse import urlsplit
@@ -732,28 +832,138 @@ def _fail(ctx: ReportContext, reason: str, subject: str) -> None:
                              ctx.roe.engagement_id, Result.ABORTED, reason, subject=subject)
 
 
+def _tool_text(value: Any) -> Any:
+    """Redacta todo texto de herramienta antes de sellarlo en el snapshot (D13)."""
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, list):
+        return [_tool_text(v) for v in value]
+    return value
+
+
+def _snapshot_findings(vulns: list[PrioritizedVuln], candidates: list[CandidateFinding],
+                       store: FindingStore) -> dict[str, Any]:
+    """Hallazgos y observaciones USADAS, con el texto de herramienta ya redactado.
+
+    El snapshot es inmutable y su hash va en el informe: lo que entra acá no se puede
+    limpiar después sin romper `reproduce`.
+    """
+    used = {(c.host, c.cwe) for c in candidates}
+    observations = [{k: _tool_text(v) if k in ("check_id", "url", "evidence") else v
+                     for k, v in asdict(o).items()}
+                    for o in store.observations() if (o.host, o.cwe) in used]
+    return {
+        "vulns": [{k: _tool_text(v) if k in ("rationale", "evidence_refs") else v
+                   for k, v in asdict(v).items()} | {"evidence_refs": _tool_text(
+                       list(v.evidence_refs))} for v in vulns],
+        "candidates": [{k: _tool_text(v) if k in ("title", "evidence_refs") else v
+                        for k, v in asdict(c).items()} for c in candidates],
+        "observations": observations,
+    }
+
+
+def _json_safe(value: Any) -> Any:
+    """La entrada curada tal cual, salvo un tipo que JSON no tiene (una fecha YAML sin
+    comillas): queda marcada, y `entry_problems` la rechaza igual al reconstruir."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    return {"invalid_type": type(value).__name__}
+
+
+def _check_findings(vulns: list[PrioritizedVuln], candidates: list[CandidateFinding]) -> None:
+    """Cada vuln con su candidato y al revés: ningún hallazgo sale del informe en silencio."""
+    vids = [v.finding_id for v in vulns]
+    cids = [c.id for c in candidates]
+    if len(set(vids)) != len(vids) or len(set(cids)) != len(cids) or set(vids) != set(cids):
+        odd = sorted((set(vids) ^ set(cids)) | {i for i in vids if vids.count(i) > 1}
+                     | {i for i in cids if cids.count(i) > 1})
+        raise ReportError("finding_mismatch",
+                          f"hallazgos sin par o repetidos: {', '.join(odd)}", None)
+
+
 def generate_report(ctx: ReportContext, vulns: list[PrioritizedVuln],
                     candidates: list[CandidateFinding]) -> GeneratedReport:
-    """Genera la próxima versión. Ante cualquier fallo no escribe ningún archivo."""
+    """Genera la próxima versión. Ante cualquier fallo no escribe ningún archivo y deja un
+    `report.generation_failed` en la bitácora (salvo con la cadena rota: ahí no se escribe)."""
     eng = ctx.roe.engagement_id
+    for p in ctx.previous:
+        if p.engagement == eng:
+            raise PreviousReportError("--previous tiene que ser de otro engagement")
+    ctx.audit.verify_integrity()                     # AuditIntegrityError: no se escribe nada
     entries = [e for e in ctx.audit.entries if e.get("engagement") == eng]
-    n = 1 + len(_generated_refs(entries))
+    generated = [e for e in entries if e["phase"] == "control"
+                 and e["action"] == REPORT_GENERATED_ACTION and e["result"] == Result.OK.value]
+    n = 1 + len(generated)
     report_id = f"report-v{n}"
-    if ctx.engagement.state == State.DELIVERED:
+    if [e.get("subject") for e in generated] != [f"report-v{i}" for i in range(1, n)]:
+        _fail(ctx, "version_conflict", report_id)
+        raise ReportError("version_conflict", "los report.generated no son correlativos",
+                          report_id)
+    delivered = any(e["phase"] == "control" and e["action"] == REPORT_DELIVERED_ACTION
+                    and e["result"] == Result.OK.value for e in entries)
+    if delivered or ctx.engagement.state == State.DELIVERED:
         _fail(ctx, "engagement_delivered", report_id)
         raise ReportError("engagement_delivered", "el engagement ya se entregó", report_id)
     if ctx.engagement.state != State.REPORT:
         _fail(ctx, "engagement_not_in_report", report_id)
         raise ReportError("engagement_not_in_report", f"estado {ctx.engagement.state.value}",
                           report_id)
-    ctx.audit.verify_integrity()                     # AuditIntegrityError: no se escribe nada
-    entries = [e for e in ctx.audit.entries if e.get("engagement") == eng]
     out_dir = ctx.state_dir / "reports" / eng
     paths = [out_dir / f"{name}-v{n}.{ext}" for name, ext in
              (("inputs", "json"), ("report", "json"), ("report", "md"))]
+    try:
+        report_raw, inputs_raw, markdown = _prepare(ctx, vulns, candidates, entries, n, paths)
+    except MissingField as exc:
+        for fid, name in exc.missing:
+            _fail(ctx, FIELD_REASONS.get(name, "invalid_catalog_entry"), fid)
+        raise
+    except ReportError as exc:
+        _fail(ctx, exc.reason, exc.subject or report_id)
+        raise
+    except FileExistsError:
+        _fail(ctx, "version_conflict", report_id)
+        raise
+    except AuditIntegrityError:
+        raise
+    except Exception:
+        _fail(ctx, "internal_error", report_id)
+        raise
+
+    ref = f"reports/{eng}/report-v{n}.json#sha256={_sha(report_raw)}"
+    written: list[Path] = []
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for path, data in ((paths[0], inputs_raw), (paths[1], report_raw),
+                           (paths[2], markdown.encode("utf-8"))):
+            with path.open("xb") as fh:
+                written.append(path)
+                fh.write(data)
+        ctx.audit.record_control(eng, AGENT, REPORT_GENERATED_ACTION, eng, Result.OK,
+                                 evidence=ref, subject=report_id)
+    except BaseException:
+        # Sin `report.generated` esos archivos no son una versión: se borran para que el
+        # próximo intento no choque con `version_conflict` para siempre.
+        for path in written:
+            path.unlink(missing_ok=True)
+        with contextlib.suppress(Exception):     # la bitácora puede ser justo lo que falló
+            _fail(ctx, "internal_error", report_id)
+        raise
+    return GeneratedReport(report_id, paths[1], paths[2], ref)
+
+
+def _prepare(ctx: ReportContext, vulns: list[PrioritizedVuln],
+             candidates: list[CandidateFinding], entries: list[Entry], n: int,
+             paths: list[Path]) -> tuple[bytes, bytes, str]:
+    """Snapshot de entradas, informe y markdown, sin escribir nada."""
+    eng = ctx.roe.engagement_id
+    report_id = f"report-v{n}"
     if any(p.exists() for p in paths):
         raise FileExistsError(f"{report_id}: ya hay archivos de esa versión y no se sobrescriben")
-
+    _check_findings(vulns, candidates)
     refs = _generated_refs(entries)
     supersedes = None
     previous_version = None
@@ -765,62 +975,41 @@ def generate_report(ctx: ReportContext, vulns: list[PrioritizedVuln],
         previous_version = json.loads((ctx.state_dir / prev_ref.split("#")[0]).read_bytes())
         supersedes = {"report_id": f"report-v{n - 1}", "sha256": prev_ref.split("=", 1)[1]}
 
-    hosts = {c.host for c in candidates}
-    observations = [asdict(o) for o in ctx.store.observations()]
     used = {}
     for c in candidates:
         for key in (c.cve, c.cwe):
             if key and key in ctx.catalog.raw:
-                used[key] = ctx.catalog.raw[key]
+                used[key] = _json_safe(ctx.catalog.raw[key])
     inputs = {
         "format": "ptaas-report-inputs/1", "engagement_id": eng, "report_id": report_id,
         "audit_seq": len(entries), "roe": _roe_summary(ctx.roe), "lab": _lab_targets(),
-        "vulns": [{**asdict(v), "evidence_refs": list(v.evidence_refs)} for v in vulns],
-        "candidates": [asdict(c) for c in candidates], "observations": observations,
-        "assets": _assets(ctx.graph, hosts),
+        **_snapshot_findings(vulns, candidates, ctx.store),
+        "assets": _assets(ctx.graph),
         "catalog": {"sha256": ctx.catalog.sha256, "entries": used},
         "poc_catalog_version": poc_catalog_version(),
         "feeds": _feeds(), "policy_sha256": _sha(POLICY.read_bytes()),
         "supersedes": supersedes,
         "previous": [asdict(p) | {"fingerprints": list(p.fingerprints)} for p in ctx.previous],
     }
-    inputs_raw = canonical(inputs)
-    inputs_rel = f"reports/{eng}/inputs-v{n}.json"
-    inputs["inputs_ref"] = f"{inputs_rel}#sha256={_sha(inputs_raw)}"
-
     try:
-        _check_closures(ctx, vulns, entries)
-        report, markdown = build(inputs, entries, ctx.state_dir, previous_version)
-    except MissingField as exc:
-        for fid, name in exc.missing:             # los otros nombres explican por qué
-            if name in FIELD_REASONS:
-                _fail(ctx, FIELD_REASONS[name], fid)
-        raise
-    except ReportError as exc:
-        _fail(ctx, exc.reason, exc.subject or report_id)
-        raise
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    report_raw = canonical(report)
-    for path, data in ((paths[0], inputs_raw), (paths[1], report_raw),
-                       (paths[2], markdown.encode("utf-8"))):
-        with path.open("xb") as fh:
-            fh.write(data)
-    ref = f"reports/{eng}/report-v{n}.json#sha256={_sha(report_raw)}"
-    ctx.audit.record_control(eng, AGENT, REPORT_GENERATED_ACTION, eng, Result.OK,
-                             evidence=ref, subject=report_id)
-    return GeneratedReport(report_id, paths[1], paths[2], ref)
+        SensitiveData.check(inputs, "inputs")
+    except SensitiveData as exc:
+        raise ReportError("sensitive_data", exc.where, report_id) from exc
+    inputs_raw = canonical(inputs)
+    inputs["inputs_ref"] = f"reports/{eng}/inputs-v{n}.json#sha256={_sha(inputs_raw)}"
+    _check_closures(ctx, vulns, entries)
+    report, markdown = build(inputs, entries, ctx.state_dir, previous_version)
+    return canonical(report), inputs_raw, markdown
 
 
 def _check_closures(ctx: ReportContext, vulns: list[PrioritizedVuln],
                     entries: list[Entry]) -> None:
     """Si el registro dice `validated` y la bitácora no, no se afirma nada (D6)."""
-    if ctx.approvals is None:
-        return
     for v in vulns:
         closure = ctx.approvals.closure(v.finding_id)
         if closure is not None and closure.outcome == "validated":
-            status = validation_of({v.finding_id}, entries, ctx.state_dir)["status"]
+            status = validation_of({v.finding_id}, entries, ctx.state_dir,
+                                   ctx.roe.engagement_id)["status"]
             if status != "validated":
                 raise ReportError("validation_mismatch",
                                   f"{v.finding_id}: el registro dice validado y la bitácora no",
@@ -868,13 +1057,29 @@ def reproduce(engagement_id: str, report_id: str, state_dir: Path | str,
         return False, str(exc)
     again_raw = canonical(again)
     if again_raw != report_raw:
-        first = next((k for k in sorted(set(report) | set(again))
-                      if report.get(k) != again.get(k)), "?")
-        return False, f"el JSON no coincide (primer campo distinto: {first})"
+        if report.get("generator_version") != GENERATOR_VERSION:
+            return False, (f"el informe lo generó la versión {report.get('generator_version')} "
+                           f"y este código es la {GENERATOR_VERSION}")
+        return False, f"el JSON no coincide (primer campo distinto: {_first_diff(report, again)})"
     md_path = state / "reports" / engagement_id / f"{report_id}.md"
     if not md_path.is_file() or md_path.read_text(encoding="utf-8") != markdown:
         return False, "el markdown no coincide"
     return True, ""
+
+
+def _first_diff(a: Any, b: Any, path: str = "") -> str:
+    """Ruta del primer valor distinto, por ejemplo `sections[3].content.findings[0]`."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in sorted(set(a) | set(b)):
+            if a.get(k) != b.get(k):
+                return _first_diff(a.get(k), b.get(k), f"{path}.{k}" if path else str(k))
+    elif isinstance(a, list) and isinstance(b, list):
+        for i, (x, y) in enumerate(zip(a, b, strict=False)):
+            if x != y:
+                return _first_diff(x, y, f"{path}[{i}]")
+        if len(a) != len(b):
+            return f"{path}[{min(len(a), len(b))}]"
+    return path or "?"
 
 
 def main(argv: list[str] | None = None) -> int:

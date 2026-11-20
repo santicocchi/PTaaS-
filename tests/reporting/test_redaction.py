@@ -11,6 +11,7 @@ CASES = {
                     "authorization requerida"),
     "bearer": ("Bearer eyJhbGciOiJIUzI1NiJ9xyz", "eyJhbGciOiJIUzI1NiJ9xyz", "bearer"),
     "cookie-value": ("Set-Cookie: security=low; path=/", "security=low", "Set-Cookie sin valor"),
+    "api-key-header": ("X-API-Key: k3y-s3cr3t", "k3y-s3cr3t", "X-API-Key ausente"),
     "session-id": ("PHPSESSID=abc123def", "abc123def", "PHPSESSID"),
     "jwt": ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJh",
             "eyJzdWIiOiIxIn0.c2lnbmF0dXJh", "eyJ corto"),
@@ -54,10 +55,23 @@ def test_cookie_de_zap_redactada():
 
 
 def test_hashes_de_la_bitacora_intactos():
-    text = (f"evidence/eng-1/f-1-1.json#sha256={SHA} y el hash corto 70bcfe921dd5, "
-            f"la huella fp1-{'0a' * 16}")
+    text = f"evidence/eng-1/f-1-1.json#sha256={SHA} y el hash corto 70bcfe921dd5"
     assert scan(text, "anexo") == []
     assert redact(text) == text
+
+
+def test_huella_tolerada_solo_en_el_escaneo():
+    """La huella la arma el builder: el escaneo final la deja pasar. En texto de una herramienta
+    un `fp1-` seguido de 32 hex puede ser un MD5 real, y la redacción no hace la excepción."""
+    fp = f"fp1-{'0a' * 16}"
+    assert scan(f"la huella {fp}", "anexo") == []
+    assert "0a" * 16 not in redact(f"zap dijo {fp}")
+
+
+def test_cookie_con_varios_pares():
+    for text in ("Cookie: lang=es; sid=s3cr3t", "Set-Cookie: a=1; Path=/; sid=s3cr3t"):
+        assert "s3cr3t" not in redact(text)
+        assert "cookie-value" in {m.pattern for m in scan(text, "s")}
 
 
 def test_scan_no_muestra_el_valor():
@@ -86,6 +100,53 @@ def test_cookie_de_zap_no_llega_al_informe(tmp_path):
     rep = lab.generate()
     for raw in (rep.path.read_text(), rep.markdown_path.read_text()):
         assert "abc123" not in raw and "id=7" not in raw and "[redacted:" in raw
+
+
+def test_snapshot_de_entradas_redactado_y_solo_lo_usado(tmp_path):
+    """El snapshot es inmutable: lo sensible no puede entrar ni siquiera ahí."""
+    import json
+
+    from tests.reporting.helpers import Lab
+    lab = Lab(tmp_path)
+    lab.finding("f-1", rationale="visto con Cookie: sid=s3cr3t")
+    lab.observe("dvwa.lab.test", "CWE-693", "http://dvwa.lab.test/?id=7",
+                "Set-Cookie: PHPSESSID=abc123; HttpOnly")
+    lab.observe("dvwa.lab.test", "CWE-79", "http://dvwa.lab.test/otra", "no se usa")
+    lab.generate()
+    raw = (lab.reports_dir() / "inputs-v1.json").read_text()
+    assert "abc123" not in raw and "id=7" not in raw and "s3cr3t" not in raw
+    assert "[redacted:" in raw
+    assert [o["cwe"] for o in json.loads(raw)["observations"]] == ["CWE-693"]
+
+
+def test_dato_sensible_en_un_campo_sin_redaccion_no_escribe_nada(tmp_path):
+    from harness.reporting import ReportError
+    from tests.reporting.helpers import Lab
+    lab = Lab(tmp_path)
+    lab.finding("f-1", asset="admin@juice-sh.op")
+    with pytest.raises(ReportError) as exc:
+        lab.generate()
+    assert exc.value.reason == "sensitive_data" and "email" in str(exc.value)
+    assert "juice-sh" not in str(exc.value) and lab.files() == []
+    (failed,) = lab.control("report.generation_failed")
+    assert failed["reason"] == "sensitive_data" and "juice-sh" not in json_dump(failed)
+
+
+def json_dump(doc):
+    import json
+    return json.dumps(doc)
+
+
+def test_texto_de_herramienta_no_rompe_el_markdown(tmp_path):
+    from tests.reporting.helpers import Lab
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.observe("dvwa.lab.test", "CWE-693", "http://dvwa.lab.test/",
+                "<script>alert(1)</script>\n# 9. Sección inventada\n`x`")
+    md = lab.generate().markdown_path.read_text()
+    assert not any(line.startswith("# 9.") for line in md.splitlines())
+    (line,) = [x for x in md.splitlines() if "alert(1)" in x]
+    assert "`<script>alert(1)</script> # 9. Sección inventada 'x'`" in line
 
 
 def test_dato_sensible_que_no_paso_por_la_redaccion(tmp_path):

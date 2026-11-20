@@ -4,7 +4,7 @@ import json
 import pytest
 
 from harness import reporting
-from harness.reporting import MissingField, reproduce
+from harness.reporting import MissingField, ReportError, reproduce
 from tests.reporting.helpers import Lab, entry
 
 
@@ -97,3 +97,36 @@ def test_dos_generaciones_iguales_son_byte_a_byte(tmp_path):
         d["sections"] = [s for s in d["sections"] if s["key"] not in ("annex_audit",
                                                                        "annex_reproducibility")]
     assert da == db
+
+
+def test_archivo_existente_queda_en_la_bitacora(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.reports_dir().mkdir(parents=True)
+    (lab.reports_dir() / "report-v1.md").write_text("previo")
+    with pytest.raises(FileExistsError):
+        lab.generate()
+    (failed,) = lab.control("report.generation_failed")
+    assert (failed["reason"], failed["subject"]) == ("version_conflict", "report-v1")
+
+
+def test_version_anterior_alterada(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    v1 = lab.generate()
+    v1.path.write_text(v1.path.read_text().replace("Falta", "Sobra"))
+    with pytest.raises(ReportError) as exc:
+        lab.generate()
+    assert exc.value.reason == "evidence_mismatch"
+    assert "report-v2.json" not in lab.files()
+    assert lab.control("report.generation_failed")[-1]["reason"] == "evidence_mismatch"
+
+
+def test_reproduce_dice_que_cambio(tmp_path, monkeypatch):
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.generate()
+    monkeypatch.setattr(reporting, "GENERATOR_VERSION", "999")
+    ok, why = _reproduce(lab)
+    assert not ok and "007.1" in why and "999" in why
+    assert reporting._first_diff({"a": [1, {"b": 2}]}, {"a": [1, {"b": 3}]}) == "a[1].b"

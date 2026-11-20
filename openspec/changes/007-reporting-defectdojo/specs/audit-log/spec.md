@@ -4,13 +4,13 @@ Tests: tests/audit_log/test_report_records.py
 
 ## ADDED Requirement: Registros del informe
 La bitácora DEBE aceptar estos registros de control, todos con `subject`:
-- `report.generated`: resultado OK, evidencia `reports/<engagement>/report-v<N>.json#sha256=<hex>` y `subject` `report-v<N>`;
-- `report.generation_failed`: resultado ABORTED, `subject` = `finding_id` o `report_id`, y motivo del conjunto cerrado `missing_cwe`, `invalid_cvss_vector`, `missing_remediation`, `evidence_mismatch`, `validation_mismatch`, `sensitive_data`, `not_lab_target`, `engagement_not_in_report`, `engagement_delivered`;
+- `report.generated`: resultado OK, evidencia `reports/<engagement>/report-v<N>.json#sha256=<hex>` y `subject` `report-v<N>`, con el mismo `N` en los dos;
+- `report.generation_failed`: resultado ABORTED, `subject` = `finding_id` o `report_id`, y motivo del conjunto cerrado `missing_cwe`, `invalid_cvss_vector`, `missing_remediation`, `invalid_catalog_entry`, `evidence_mismatch`, `validation_mismatch`, `finding_mismatch`, `sensitive_data`, `summary_jargon`, `not_lab_target`, `out_of_scope`, `engagement_not_in_report`, `engagement_delivered`, `version_conflict`, `internal_error`;
 - `hitl.approve_delivery` y `hitl.reject_delivery`: resultado OK, agente `reviewer:<nombre>`, evidencia = referencia hasheada de la fila del registro con su número y `subject` = `report_id`;
-- `report.delivery`: resultado PENDING_HITL (sin aprobación) o ABORTED (kill switch), con `subject` = `report_id`;
+- `report.delivery`: resultado PENDING_HITL (sin aprobación) o ABORTED (kill switch), con `subject` = `report_id` (`report-v<N>`);
 - `report.delivered`: resultado OK, evidencia del archivo exportado o del resumen del envío, y `subject` = `report_id`.
 
-Un motivo fuera de esos conjuntos, o un `report.generated` o `report.delivered` sin evidencia, DEBE rechazarse al escribir. Los registros del informe NO DEBEN contener el contenido del informe, la clave de DefectDojo ni valores redactados.
+Un motivo fuera de esos conjuntos, un `report.generated` o `report.delivered` sin evidencia, un `report.generated` cuya evidencia no es el archivo de su `subject` en su engagement, o un `report.generated`, `report.delivery` o `report.delivered` cuyo `subject` no es `report-v<N>`, DEBE rechazarse al escribir. Los registros del informe NO DEBEN contener el contenido del informe, la clave de DefectDojo ni valores redactados.
 
 ### Scenario: informe generado
 - GIVEN un `report-v1` escrito
@@ -19,6 +19,11 @@ Un motivo fuera de esos conjuntos, o un `report.generated` o `report.delivered` 
 
 ### Scenario: motivo de fallo inventado
 - GIVEN un `report.generation_failed` con motivo `campo_raro`
+- WHEN se intenta escribir
+- THEN se rechaza
+
+### Scenario: informe generado con otra forma
+- GIVEN un `report.generated` con `subject` `f-1`, o con `subject` `report-v2` y evidencia `reports/eng-1/report-v1.json`, o con evidencia de otro engagement
 - WHEN se intenta escribir
 - THEN se rechaza
 

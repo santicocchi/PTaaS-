@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from harness.contracts import AuditIntegrityError
+from harness.contracts import AuditIntegrityError, Result
 from harness.engagement import State
 from harness.reporting import ReportError
 from tests.reporting.helpers import Lab
@@ -85,3 +85,112 @@ def test_epss_junto_al_cvss(tmp_path):
     assert epss["f-3"] == "0.500 (dato desactualizado)"
     f1 = next(f for f in doc["findings"] if f["finding_ids"] == ["f-1"])
     assert (f1["cvss_v4_score"], f1["severity"]) == ("2.1", "Low")
+
+
+def test_host_excluido_por_el_roe(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1", host="juiceshop.lab.test")       # en la lista `exclusions` del RoE
+    with pytest.raises(ReportError) as exc:
+        lab.generate()
+    assert exc.value.reason == "out_of_scope" and lab.files() == []
+    assert lab.control("report.generation_failed")[-1]["reason"] == "out_of_scope"
+
+
+@pytest.mark.parametrize("side", ["vuln", "candidate", "repeated"])
+def test_hallazgo_sin_par_no_desaparece(tmp_path, side):
+    from harness.schemas import CandidateFinding, PrioritizedVuln
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    if side == "vuln":
+        lab.vulns.append(PrioritizedVuln(finding_id="f-9", status="confirmed", rationale="r"))
+    elif side == "candidate":
+        lab.candidates.append(CandidateFinding(id="f-9", asset_id="a", cwe="CWE-22",
+                                               evidence_refs=["zap:1@http://dvwa.lab.test/"],
+                                               host="dvwa.lab.test"))
+    else:
+        lab.vulns.append(lab.vulns[0])
+    with pytest.raises(ReportError) as exc:
+        lab.generate()
+    assert exc.value.reason == "finding_mismatch" and lab.files() == []
+    assert lab.control("report.generation_failed")[-1]["reason"] == "finding_mismatch"
+
+
+def test_bitacora_con_entrega_aunque_el_estado_diga_report(tmp_path):
+    """El Engagement no persiste: la bitácora manda."""
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.generate()
+    lab.audit.record_control(lab.eng, "report-delivery", "report.delivered", lab.eng,
+                             Result.OK, evidence="exports/eng-1/dd.json#sha256=" + "0" * 64,
+                             subject="report-v1")
+    with pytest.raises(ReportError) as exc:
+        lab.generate()
+    assert exc.value.reason == "engagement_delivered"
+    assert "report-v2.json" not in lab.files()
+
+
+def test_error_inesperado_queda_en_la_bitacora(tmp_path, monkeypatch):
+    from harness import reporting
+
+    def boom(*a, **k):
+        raise RuntimeError("falla interna")
+    monkeypatch.setattr(reporting, "build", boom)
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    with pytest.raises(RuntimeError):
+        lab.generate()
+    assert lab.files() == []
+    assert lab.control("report.generation_failed")[-1]["reason"] == "internal_error"
+
+
+def test_falla_al_registrar_no_deja_archivos_huerfanos(tmp_path, monkeypatch):
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    original = lab.audit.record_control
+
+    def record(eng, agent, action, *a, **k):
+        if action == "report.generated":
+            raise OSError("disco lleno")
+        return original(eng, agent, action, *a, **k)
+    monkeypatch.setattr(lab.audit, "record_control", record)
+    with pytest.raises(OSError):
+        lab.generate()
+    assert lab.files() == []
+    assert lab.control("report.generation_failed")[-1]["reason"] == "internal_error"
+    monkeypatch.undo()
+    assert lab.generate().report_id == "report-v1"
+
+
+def test_feed_distinto_y_epss_sin_fecha(tmp_path, monkeypatch):
+    from harness import reporting
+    monkeypatch.setattr(reporting, "_feeds", lambda: {"epss_date": None,
+                                                      "manifest_sha256": None})
+    lab = Lab(tmp_path)
+    lab.finding("f-1", epss=0.2, cvss=(9.9, "4.0"))
+    lab.finding("f-2", cwe="CWE-1021", cvss=(9.9, "3.1"))
+    doc = json.loads(lab.generate().path.read_bytes())
+    by = {f["finding_ids"][0]: f for f in doc["findings"]}
+    assert by["f-1"]["epss"]["text"] == "0.200 (snapshot sin fecha)"
+    assert by["f-1"]["feed_cvss"]["differs"] is True
+    assert by["f-2"]["feed_cvss"]["differs"] is False      # un 3.1 no se compara con el 4.0
+    assert by["f-1"]["cvss_v4_nomenclature"] == "CVSS-B"
+
+
+def test_orden_por_la_prioridad_sin_redondear(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1", priority=7.001)
+    lab.finding("f-2", cwe="CWE-1021", priority=7.004)
+    doc = json.loads(lab.generate().path.read_bytes())
+    assert [f["finding_ids"][0] for f in doc["findings"]] == ["f-2", "f-1"]
+
+
+def test_descartado_con_intento_positivo_se_senala(tmp_path):
+    lab = Lab(tmp_path)
+    lab.finding("f-1")
+    lab.finding("f-2", cwe="CWE-1021", status="discarded", rationale="FP-001")
+    lab.attempt("f-2")
+    rep = lab.generate()
+    annex = {s["key"]: s["content"] for s in json.loads(rep.path.read_bytes())["sections"]}
+    (d,) = annex["annex_discarded"]["findings"]
+    assert d["validated_in_sandbox"] is True
+    assert "revisar el descarte" in rep.markdown_path.read_text()

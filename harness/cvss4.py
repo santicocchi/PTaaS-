@@ -5,6 +5,9 @@ la especificación de FIRST, opcionales como mucho una vez y en su orden, solo v
 permitidos y sin nada después (`\\Z`). El puntaje lo calcula la biblioteca `cvss` (fijada en
 requirements.txt), que implementa el algoritmo de referencia de FIRST (macrovectores y tabla
 de búsqueda), y solo se le pasa un vector que ya pasó el parser.
+
+Con métricas de amenaza (E) o ambientales (CR..MSA) distintas de X, el puntaje deja de ser el
+base: FIRST lo nombra CVSS-BT, CVSS-BE o CVSS-BTE, y el informe muestra esa nomenclatura.
 """
 from __future__ import annotations
 
@@ -30,6 +33,8 @@ OPTIONAL: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("S", tuple("XNP")), ("AU", tuple("XNY")), ("R", tuple("XAUI")), ("V", tuple("XDC")),
     ("RE", tuple("XLMH")), ("U", ("X", "Clear", "Green", "Amber", "Red")),
 )
+_ENVIRONMENTAL = ("CR", "IR", "AR", "MAV", "MAC", "MAT", "MPR", "MUI", "MVC", "MVI", "MVA",
+                  "MSC", "MSI", "MSA")
 _PAIR_RE = re.compile(r"^([A-Z]{1,3}):([A-Za-z]{1,5})\Z")
 
 
@@ -49,6 +54,13 @@ class Cvss4Vector:
     @property
     def severity(self) -> str:
         return severity(self.score)
+
+    @property
+    def nomenclature(self) -> str:
+        """CVSS-B, CVSS-BT, CVSS-BE o CVSS-BTE (especificación de FIRST, sección 1.3)."""
+        threat = self.metrics.get("E", "X") != "X"
+        env = any(self.metrics.get(k, "X") != "X" for k in _ENVIRONMENTAL)
+        return "CVSS-B" + ("T" if threat else "") + ("E" if env else "")
 
 
 def parse_vector(text: str) -> Cvss4Vector:

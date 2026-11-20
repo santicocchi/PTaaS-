@@ -24,9 +24,11 @@ def test_informe_generado(tmp_path):
 
 
 @pytest.mark.parametrize("reason", ["missing_cwe", "invalid_cvss_vector", "missing_remediation",
-                                    "evidence_mismatch", "validation_mismatch", "sensitive_data",
-                                    "not_lab_target", "engagement_not_in_report",
-                                    "engagement_delivered"])
+                                    "invalid_catalog_entry", "evidence_mismatch",
+                                    "validation_mismatch", "finding_mismatch", "sensitive_data",
+                                    "summary_jargon", "not_lab_target", "out_of_scope",
+                                    "engagement_not_in_report", "engagement_delivered",
+                                    "version_conflict", "internal_error"])
 def test_motivos_de_fallo(audit, reason):
     audit.record_control(ENG, "report-builder", "report.generation_failed", ENG,
                          Result.ABORTED, reason, subject="f-1")
@@ -56,6 +58,28 @@ def test_generado_o_entregado_sin_evidencia(audit, action):
         audit.record_control(ENG, "report-builder", action, ENG, Result.ABORTED,
                              evidence=REF, subject="report-v1")
     assert audit.entries == []
+
+
+@pytest.mark.parametrize("subject,evidence", [
+    ("f-1", "reports/eng-1/f-1.json#sha256=" + "ab" * 32),          # no es un informe
+    ("report-v2", REF),                                              # otra versión
+    ("report-v1", "evidence/eng-1/f-1-1.json#sha256=" + "ab" * 32),  # otro archivo
+    ("report-v1", "reports/eng-2/report-v1.json#sha256=" + "ab" * 32),  # otro engagement
+])
+def test_informe_generado_con_otra_forma(audit, subject, evidence):
+    with pytest.raises(ValueError):
+        audit.record_control(ENG, "report-builder", "report.generated", ENG, Result.OK,
+                             evidence=evidence, subject=subject)
+    assert audit.entries == []
+
+
+@pytest.mark.parametrize("action", ["report.delivery", "report.delivered"])
+def test_entrega_con_sujeto_que_no_es_informe(audit, action):
+    result = Result.PENDING_HITL if action == "report.delivery" else Result.OK
+    evidence = None if action == "report.delivery" else REF
+    with pytest.raises(ValueError):
+        audit.record_control(ENG, "report-delivery", action, ENG, result, evidence=evidence,
+                             subject="f-1")
 
 
 @pytest.mark.parametrize("result", [Result.PENDING_HITL, Result.ABORTED])

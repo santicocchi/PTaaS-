@@ -61,3 +61,9 @@ def test_severidad_por_puntaje(score, label):
 def test_puntaje_de_first(text, score, label):
     v = parse_vector(text)
     assert (v.score, v.severity) == (score, label)
+
+
+@pytest.mark.parametrize("tail,name", [("", "CVSS-B"), ("/E:U", "CVSS-BT"), ("/CR:H", "CVSS-BE"),
+                                       ("/E:A/CR:H", "CVSS-BTE"), ("/E:X/S:P", "CVSS-B")])
+def test_nomenclatura_de_first(tail, name):
+    assert parse_vector(BASE + tail).nomenclature == name
