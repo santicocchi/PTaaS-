@@ -21,7 +21,7 @@ El servicio `phantomcorp` de `lab/docker-compose.yml` DEBE estar solo en la red 
 ### Scenario: servicio bien declarado
 - GIVEN `lab/docker-compose.yml`
 - WHEN el test lo lee
-- THEN `phantomcorp` tiene `profiles: [integrador]`, solo la red `lab`, IP `10.99.0.12` y alias `phantomcorp.lab.test`
+- THEN `phantomcorp` tiene `profiles: [integrador]`, solo la red `lab`, IP `10.99.0.12` y alias `phantomcorp.lab.test`, solo las claves permitidas, y las IP fijas de los objetivos quedan fuera del `ip_range` dinámico
 
 ### Scenario: target conectado a la red de herramientas
 - GIVEN un compose donde `phantomcorp` también está en `tools`
@@ -29,12 +29,17 @@ El servicio `phantomcorp` de `lab/docker-compose.yml` DEBE estar solo en la red 
 - THEN el test falla
 
 ## ADDED Requirement: Solo `phantomcorp` en el engagement integrador
-Con la RoE del integrador, toda acción sobre DVWA o Juice Shop DEBE bloquearse con `excluded`.
+Con la RoE del integrador, toda acción sobre DVWA o Juice Shop (por nombre o por IP) DEBE bloquearse y quedar en bitácora. El motivo es `out_of_scope`, porque no están en el alcance; además figuran en las exclusiones, que prevalecen si alguien amplía el alcance por error (`excluded`).
 
 ### Scenario: acción sobre DVWA durante el integrador
 - GIVEN un token emitido desde `demo/roe-integrador.yaml`
-- WHEN se invoca `httpx.probe` sobre `dvwa.lab.test`
-- THEN se bloquea con `excluded`, queda en bitácora y el adaptador no recibe la llamada
+- WHEN se invoca `httpx.probe` sobre `dvwa.lab.test`, `juiceshop.lab.test` o sus IP
+- THEN se bloquea con `out_of_scope` o `excluded`, queda en bitácora como `BLOCKED` y el adaptador no recibe la llamada
+
+### Scenario: alcance ampliado por error
+- GIVEN la RoE del integrador con el alcance ampliado a `10.99.0.0/24` y los tres dominios
+- WHEN se invoca sobre `dvwa.lab.test`, `juiceshop.lab.test`, `10.99.0.10` o `10.99.0.11`
+- THEN se bloquea con `excluded`
 
 ### Scenario: nombre del integrador que resuelve fuera del alcance
 - GIVEN `phantomcorp.lab.test` resolviendo a 10.99.0.50

@@ -267,3 +267,21 @@ POC-CSP-001 y evidencia íntegra. `report-v1` salió con 7 hallazgos (1 validado
 validar, reconocido con `--ack-unvalidated-high`); el Reviewer lo aprobó por su SHA-256 y la
 entrega offline dejó `defectdojo-report-v1.json` y el resumen de la entrega. Estado final
 DELIVERED, 21 registros en la bitácora del host, cadena íntegra.
+
+# Práctico integrador: `phantomcorp` en el laboratorio (change 010)
+
+El target del práctico final del curso se puede sumar a la red aislada del PTaaS como servicio
+**opcional** (perfil `integrador`). No se copia a este repo: se construye desde tu clon del repo
+del curso. Queda en `10.99.0.12` con el nombre `phantomcorp.lab.test`, solo en la red `lab`.
+
+En PowerShell, desde la carpeta del PTaaS (agrega la ruta al `lab/.env` que ya tiene la clave de ZAP):
+
+```powershell
+python -c "import pathlib; p=pathlib.Path('lab/.env'); p.write_text((p.read_text() if p.exists() else '') + 'PTAAS_INTEGRADOR_CONTEXT=C:/Users/HP/Desktop/LabsSeguridadInformatica2026/labs/labfinal-practico-integrador/entorno/phantomcorp' + chr(10))"
+docker compose -f lab/docker-compose.yml --profile integrador up -d --build
+```
+
+La RoE es `demo/roe-integrador.yaml`: solo `phantomcorp.lab.test` / `10.99.0.12/32`, con DVWA y
+Juice Shop excluidos. El PTaaS hace recon, análisis y verificaciones **inertes**; la explotación
+(hitos R2 a R4 del práctico) se hace a mano desde la consola del curso y no pasa por acá.
+Sin `--profile integrador`, el laboratorio es el de siempre.

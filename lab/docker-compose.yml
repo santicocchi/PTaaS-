@@ -12,13 +12,33 @@ services:
     image: vulnerables/web-dvwa@sha256:dae203fe11646a86937bf04db0079adef295f426da68a92b40e3b181f337daa7
     networks:
       lab:
+        # IP fija (010): fuera del rango dinámico, así una RoE puede excluirla también por IP.
+        ipv4_address: 10.99.0.10
         aliases: [dvwa.lab.test]
 
   juiceshop:
     image: bkimminich/juice-shop@sha256:877fc77b12d72b42e486eb09b6b1711cc56514306d92006b284e7e7cf076a809
     networks:
       lab:
+        ipv4_address: 10.99.0.11
         aliases: [juiceshop.lab.test]
+
+  phantomcorp:
+    # Target del práctico integrador del curso (change 010). Opcional: solo con
+    # `--profile integrador`. Se construye desde TU clon del repo del curso (no se copia acá):
+    # PTAAS_INTEGRADOR_CONTEXT en lab/.env apunta a labs/labfinal-practico-integrador/entorno/phantomcorp.
+    # Solo en la red `lab` (internal), IP fija dentro de lab_only_cidrs, sin puertos ni volúmenes.
+    profiles: [integrador]
+    # Default inocuo y no `:?`: compose interpola todos los servicios aunque no tengan el
+    # perfil activo, y `:?` rompería el laboratorio de siempre. Sin la variable, el build falla.
+    build:
+      context: ${PTAAS_INTEGRADOR_CONTEXT:-./integrador-no-configurado}
+    image: ptaas-phantomcorp
+    pull_policy: build        # nunca buscar `ptaas-phantomcorp` en un registry
+    networks:
+      lab:
+        ipv4_address: 10.99.0.12
+        aliases: [phantomcorp.lab.test]
 
   runner:
     # python:3.12-alpine + nmap + httpx + subfinder + requirements.txt (ver lab/runner.Dockerfile).
@@ -118,3 +138,6 @@ networks:
     ipam:
       config:
         - subnet: 10.99.0.0/24
+          # 010: lo dinámico (runner, zap, sandbox) toma IP de la mitad alta; las fijas de los
+          # objetivos (.10 DVWA, .11 Juice Shop, .12 phantomcorp) nunca las ocupa otro contenedor.
+          ip_range: 10.99.0.128/25

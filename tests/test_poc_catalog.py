@@ -162,4 +162,4 @@ def test_canario_de_una_corrida_anterior(cat):
 
 def test_version_del_catalogo():
     from harness.poc.catalog import catalog_version
-    assert catalog_version() == "0.2.0"
+    assert catalog_version() == "0.3.0"

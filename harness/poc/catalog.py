@@ -30,6 +30,7 @@ _REQUIRED = {"id", "version", "title", "cwe", "kind", "method", "parameters",
 LAB_TARGET_HOSTS: dict[str, frozenset[str]] = {
     "dvwa": frozenset({"dvwa.lab.test"}),
     "juice-shop": frozenset({"juiceshop.lab.test"}),
+    "phantomcorp": frozenset({"phantomcorp.lab.test"}),   # 010: práctico integrador del curso
 }
 
 
