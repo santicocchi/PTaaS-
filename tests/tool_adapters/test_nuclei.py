@@ -6,9 +6,13 @@ import pytest
 from harness.adapters.common import ForbiddenArgument, InvalidTarget, load_profiles
 from harness.adapters.nuclei_adapter import NucleiSafeTemplates, build_argv, parse_output
 from harness.contracts import Phase
-from harness.templates import ALLOWLIST
+from harness.templates import ALLOWLIST, load_manifest, runnable
 from tests.conftest import act, make_token
-from tests.tool_adapters.allowlist_helpers import approved_allowlist, rewrite_manifest_row
+from tests.tool_adapters.allowlist_helpers import (
+    approved_allowlist,
+    pending_allowlist,
+    rewrite_manifest_row,
+)
 
 FIX = Path(__file__).resolve().parent.parent / "fixtures" / "analysis"
 CSP = [ALLOWLIST / "ptaas-missing-csp.yaml"]
@@ -120,9 +124,10 @@ def test_template_modificado_no_corre(tmp_path):
     assert not any("ptaas-server-version" in a for a in seen[0])
 
 
-def test_sin_templates_aprobados_no_se_ejecuta_nada():
+def test_sin_templates_aprobados_no_se_ejecuta_nada(tmp_path):
     calls = []
-    out = NucleiSafeTemplates(lambda a, t: calls.append(a) or "").run(
+    out = NucleiSafeTemplates(lambda a, t: calls.append(a) or "",
+                              templates_dir=pending_allowlist(tmp_path)).run(
         act("nuclei.safe_templates", Phase.ANALYZE), "dvwa.lab.test",
         make_token(Phase.ANALYZE), ("10.99.0.2",))
     assert calls == [] and out["templates_run"] == [] and out["skipped"]
@@ -147,3 +152,9 @@ def test_resultado_de_un_puerto_no_sondeado_se_descarta():
     line = '{"template-id":"ptaas-missing-csp","ip":"10.99.0.2","matched-at":"http://10.99.0.2:8443/"}'
     assert parse_output("dvwa.lab.test", line, ("10.99.0.2",), IDS, (80,))["findings"] == []
     assert parse_output("dvwa.lab.test", line, ("10.99.0.2",), IDS, (8443,))["findings"]
+
+
+def test_allowlist_del_repo_firmada_y_valida():
+    ready, skipped = runnable(ALLOWLIST)
+    assert len(ready) == 6 and skipped == []
+    assert all(e.approved for e in load_manifest(ALLOWLIST))

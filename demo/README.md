@@ -258,3 +258,12 @@ En esta demo no muestran tecnologías, así que el aviso del anexo D sale sin pr
 El informe tampoco dice que es una simulación: en simulación, "validado en sandbox" es el
 docker simulado. Tampoco aparecen los registros de relevamiento: el grafo y la bitácora del
 runner (`demo/out`) no se leen porque el runner los puede escribir.
+
+Corrida en el laboratorio (20/11/2026, Windows con Docker Desktop, templates de nuclei y tabla
+curada firmados por el Reviewer): el pipeline encontró en `dvwa.lab.test` CWE-693, CWE-497 y
+CWE-1004 confirmados por nuclei y ZAP con confianza alta, más CWE-1021 y CWE-1275 inconclusos y
+los dos CVE sintéticos por versión. El loop C validó CWE-693 (falta CSP) en el sandbox con
+POC-CSP-001 y evidencia íntegra. `report-v1` salió con 7 hallazgos (1 validado, 1 alto sin
+validar, reconocido con `--ack-unvalidated-high`); el Reviewer lo aprobó por su SHA-256 y la
+entrega offline dejó `defectdojo-report-v1.json` y el resumen de la entrega. Estado final
+DELIVERED, 21 registros en la bitácora del host, cadena íntegra.

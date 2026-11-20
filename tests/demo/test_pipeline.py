@@ -3,7 +3,7 @@ import sqlite3
 
 from demo import pipeline
 from harness.audit import verify_file
-from tests.tool_adapters.allowlist_helpers import approved_allowlist
+from tests.tool_adapters.allowlist_helpers import approved_allowlist, pending_allowlist
 
 
 def _audit_rows(tmp_path):
@@ -12,7 +12,8 @@ def _audit_rows(tmp_path):
         return db, con.execute("SELECT phase, action, target, result FROM audit").fetchall()
 
 
-def test_pipeline_simulado_sin_templates_aprobados(tmp_path, capsys):
+def test_pipeline_simulado_sin_templates_aprobados(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(pipeline, "TEMPLATES", pending_allowlist(tmp_path / "allowlist"))
     assert pipeline.main(["--out", str(tmp_path)]) == 0
     out = capsys.readouterr().out
     assert "SINTÉTICO" in out and "OK: cadena íntegra" in out
@@ -36,6 +37,11 @@ def test_pipeline_simulado_con_templates_aprobados(tmp_path, capsys, monkeypatch
     out = capsys.readouterr().out
     assert "nuclei: 6 templates aprobados, 0 sin correr" in out
     assert "OK: cadena íntegra" in out
+
+
+def test_pipeline_simulado_con_la_allowlist_del_repo(tmp_path, capsys):
+    assert pipeline.main(["--out", str(tmp_path)]) == 0
+    assert "nuclei: 6 templates aprobados, 0 sin correr" in capsys.readouterr().out
 
 
 def test_pipeline_lab_sin_laboratorio_no_hace_nada(tmp_path, monkeypatch):

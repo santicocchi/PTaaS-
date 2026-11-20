@@ -1,10 +1,10 @@
-"""Copia de la allow-list con revisor, para tests (el manifiesto del repo espera revisión)."""
+"""Copias de la allow-list para tests: firmada o sin firmar, sin depender del estado del repo."""
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
 
-from harness.templates import ALLOWLIST, sha256_of
+from harness.templates import ALLOWLIST, load_manifest, sha256_of
 
 
 def approved_allowlist(dest: Path, reviewer: str = "Revisora del equipo") -> Path:
@@ -14,6 +14,14 @@ def approved_allowlist(dest: Path, reviewer: str = "Revisora del equipo") -> Pat
     lines = (ALLOWLIST / "MANIFEST.md").read_text(encoding="utf-8").splitlines()
     out = [ln.replace("| pendiente |", f"| {reviewer} |") for ln in lines]
     (dest / "MANIFEST.md").write_text("\n".join(out) + "\n", encoding="utf-8")
+    return dest
+
+
+def pending_allowlist(dest: Path) -> Path:
+    """Copia con todos los templates sin revisar (revisor `pendiente`)."""
+    approved_allowlist(dest)
+    for entry in load_manifest(dest):
+        rewrite_manifest_row(dest, entry.id, revisor="pendiente")
     return dest
 
 
