@@ -3,7 +3,6 @@ import json
 
 import pytest
 
-from harness.contracts import Result
 from harness.reporting import PreviousReportError, fingerprint, load_previous
 from tests.reporting.helpers import Lab
 
@@ -36,12 +35,8 @@ def _delivered(tmp_path, eng, cwes):
     for i, cwe in enumerate(cwes):
         lab.finding(f"f-{i}", cwe=cwe, asset="asset-dvwa")
     rep = lab.generate()
-    out = lab.reports_dir() / "export.json"
-    out.write_text("{}")
-    import hashlib
-    ref = f"reports/{eng}/export.json#sha256={hashlib.sha256(b'{}').hexdigest()}"
-    lab.audit.record_control(eng, "report-delivery", "report.delivered", eng, Result.OK,
-                             evidence=ref, subject=rep.report_id)
+    lab.decide_delivery()
+    lab.deliver()                                    # entrega de verdad, en modo offline
     return lab, rep
 
 

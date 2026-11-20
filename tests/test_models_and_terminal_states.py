@@ -24,9 +24,11 @@ def test_todo_agente_con_llm_tiene_modelo_y_prompt():
 
 
 def test_no_se_avanza_tras_entregar():
+    from harness.engagement import _DELIVERY_GRANT
     e = Engagement(roe_valid=True)
-    for gate in ("first_active_action", "before_validate", "before_deliver"):
+    for gate in ("first_active_action", "before_validate"):
         e.approve(gate)
+    e.grant_delivery(_DELIVERY_GRANT)          # 007: solo lo otorga la entrega registrada
     while e.state != State.DELIVERED:
         e.advance()
     with pytest.raises(TransitionError):

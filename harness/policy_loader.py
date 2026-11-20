@@ -37,6 +37,37 @@ def hitl_phases(policy: dict[str, Any] | None = None) -> set[Phase]:
     return {Phase(g["before"]) for g in policy.get("gates_hitl", []) if g["before"] in fases}
 
 
+def hitl_capabilities(policy: dict[str, Any] | None = None) -> set[str]:
+    """Capabilities que SIEMPRE exigen aprobación humana (`gates_hitl[].capabilities`, 007)."""
+    policy = policy or load_policy()
+    found: set[str] = set()
+    for gate in policy.get("gates_hitl", []):
+        caps = gate.get("capabilities") or []
+        if not isinstance(caps, list) or not all(isinstance(c, str) and c for c in caps):
+            raise ValueError(f"gates_hitl.capabilities inválido: {caps!r}")
+        found.update(caps)
+    return found
+
+
+def delivery_ttl_minutes(policy: dict[str, Any] | None = None) -> int:
+    """Vencimiento de una aprobación de entrega (gate `before: deliver`)."""
+    gates = (policy or load_policy()).get("gates_hitl") or []
+    (gate,) = [g for g in gates if g.get("before") == "deliver"]
+    ttl = gate.get("approval_ttl_minutes")
+    if type(ttl) is not int or ttl < 1:
+        raise ValueError(f"approval_ttl_minutes del gate de entrega inválido: {ttl!r}")
+    return ttl
+
+
+def defectdojo_limits(policy: dict[str, Any] | None = None) -> tuple[float, int]:
+    """(timeout_s, max_response_bytes) de `reporting.defectdojo`."""
+    cfg = (policy or load_policy())["reporting"]["defectdojo"]
+    timeout, size = cfg["timeout_s"], cfg["max_response_bytes"]
+    if not isinstance(timeout, int | float) or timeout <= 0 or type(size) is not int or size < 1:
+        raise ValueError("reporting.defectdojo: timeout_s y max_response_bytes inválidos")
+    return float(timeout), size
+
+
 def inconsistencies(policy: dict[str, Any] | None = None, tools: dict[str, Any] | None = None
                     ) -> dict[str, set[tuple[str, str]]]:
     policy, tools = policy or load_policy(), tools or load_tools()

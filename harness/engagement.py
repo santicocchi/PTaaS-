@@ -36,6 +36,12 @@ _GATES = {
 class TransitionError(Exception): ...
 
 
+# 007, D17: `before_deliver` no se otorga con `approve()`. Lo otorga `harness.delivery` después
+# de verificar la cadena, el kill switch y la aprobación auditada, y de registrar
+# `report.delivered`. Un test controla que nadie más en `harness/` use esta marca.
+_DELIVERY_GRANT = object()
+
+
 class Engagement:
     def __init__(self, roe_valid: bool):
         self.state = State.CREATED
@@ -43,7 +49,15 @@ class Engagement:
         self.approvals: set[str] = set()
 
     def approve(self, gate: str) -> None:
+        if gate == "before_deliver":
+            raise TransitionError("before_deliver lo otorga la entrega registrada "
+                                  "(harness.delivery), no una aprobación suelta")
         self.approvals.add(gate)
+
+    def grant_delivery(self, grant: object) -> None:
+        if grant is not _DELIVERY_GRANT:
+            raise TransitionError("before_deliver solo lo otorga harness.delivery")
+        self.approvals.add("before_deliver")
 
     def advance(self) -> State:
         if self.state in (State.DELIVERED, State.ABORTED):

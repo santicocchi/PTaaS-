@@ -2,7 +2,9 @@
 los Scenarios nuevos están en tests/reporting/."""
 import pytest
 
-from harness.reporting import DeliveryNotApproved, MissingField, deliver
+from harness.delivery import DeliveryNotApproved
+from harness.engagement import State
+from harness.reporting import MissingField
 from tests.reporting.helpers import Lab
 
 
@@ -19,4 +21,7 @@ def test_entrega_sin_aprobacion_se_rechaza(tmp_path):
     lab.finding("F-1")
     rep = lab.generate()
     with pytest.raises(DeliveryNotApproved):
-        deliver({"report_id": rep.report_id}, reviewer_approved=False)
+        lab.deliver()
+    assert lab.engagement.state == State.REPORT
+    (pending,) = lab.control("report.delivery")
+    assert (pending["result"], pending["subject"]) == ("PENDING_HITL", rep.report_id)

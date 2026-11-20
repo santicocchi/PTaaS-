@@ -84,9 +84,17 @@ class TokenIssuer:
         if not roe.window_start.timestamp() <= ts < roe.window_end.timestamp():
             raise self._reject(roe, phase, agent, "outside_window")
         ttl = self._policy["phases"][phase.value]["token_ttl_minutes"] * 60
-        unsigned = ScopeToken(roe.engagement_id, roe.cidrs, roe.domains, ts,
-                              min(ts + ttl, roe.window_end.timestamp()), phase,
-                              excluded=self._pin_excluded(roe.excluded))
+        end = min(ts + ttl, roe.window_end.timestamp())
+        if phase is Phase.REPORT:
+            # 007, D15: en REPORT solo se alcanza el destino del informe, nunca un objetivo
+            # del laboratorio (I4). Sin destinos, el alcance queda vacío.
+            unsigned = ScopeToken(roe.engagement_id,
+                                  tuple(f"{d.ip}/32" for d in roe.report_destinations),
+                                  tuple(d.host for d in roe.report_destinations), ts, end,
+                                  phase)
+        else:
+            unsigned = ScopeToken(roe.engagement_id, roe.cidrs, roe.domains, ts, end, phase,
+                                  excluded=self._pin_excluded(roe.excluded))
         token = dataclasses.replace(unsigned, mac=self._mac(unsigned))
         self._log(roe.engagement_id, agent, ISSUE_ACTION, phase.value, Result.OK)
         return token

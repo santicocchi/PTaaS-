@@ -24,8 +24,10 @@ gates_hitl:
     approver_role: reviewer
     validation_timeout_minutes: 60   # 006, D5: sin decisión → not_validated (reviewer_timeout)
     approval_ttl_minutes: 60         # 006, D5: una aprobación vencida vale lo mismo que ninguna
-  - before: deliver
+  - before: deliver           # 007, D14-D15: aprobación por versión del informe y su SHA-256
     approver_role: reviewer
+    approval_ttl_minutes: 60         # vencida vale lo mismo que ninguna
+    capabilities: [defectdojo.export]   # el Guard exige gate para estas, diga lo que diga la Action
   - before: first_active_action
     approver_role: reviewer
 
@@ -34,6 +36,11 @@ limits:
   rate_limit_rps_per_target: 5
   max_feed_age_days: 30               # change 005: snapshot más viejo → feed_stale
   destructive_actions: forbidden      # fuera del MVP
+
+reporting:                            # 007, D15
+  defectdojo:
+    timeout_s: 15
+    max_response_bytes: 65536
 
 sandbox:
   network: isolated

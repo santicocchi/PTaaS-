@@ -95,16 +95,7 @@ DIFF_FIELDS = ("title", "severity", "cvss_v4_vector", "remediation", "business_i
 
 # ---- errores --------------------------------------------------------------------------------
 
-class DeliveryNotApproved(Exception):
-    """La entrega no tiene una aprobación vigente del Reviewer (gate de entrega, D14)."""
-
-
-def deliver(report: dict[str, Any], reviewer_approved: bool) -> dict[str, Any]:
-    """Entrega anterior al 007, que todavía nadie llama. La reemplaza el gate de D14 (segundo
-    PR del change): ahí la aprobación sale de la bitácora y no de un booleano del llamador."""
-    if not reviewer_approved:
-        raise DeliveryNotApproved("la entrega requiere aprobación del Reviewer")
-    return {**report, "delivered": True}
+# La entrega (gate de D14, exportación y cierre) vive en harness/delivery.py.
 
 
 class ReportError(Exception):
@@ -175,19 +166,31 @@ def load_previous(engagement_id: str, report_id: str, state_dir: Path | str,
     finally:
         log.close()
     ref = _generated_refs(entries).get(report_id)
-    # TODO(007 PR 2, D14): atar el `report.delivered` al SHA-256 de esta versión cuando el
-    # gate de entrega defina su evidencia.
-    delivered = any(e["phase"] == "control" and e["action"] == REPORT_DELIVERED_ACTION
-                    and e["result"] == Result.OK.value and e.get("subject") == report_id
-                    for e in entries)
-    if ref is None or not delivered:
+    receipts = [str(e["evidence"]) for e in entries
+                if e["phase"] == "control" and e["action"] == REPORT_DELIVERED_ACTION
+                and e["result"] == Result.OK.value and e.get("subject") == report_id]
+    if ref is None or not receipts:
         raise PreviousReportError(f"{engagement_id}/{report_id}: no figura entregado")
     if not verify_evidence(state_dir, ref):
         raise PreviousReportError(f"{engagement_id}/{report_id}: el archivo no coincide")
+    # El `report.delivered` tiene que ser de ESTA versión: su resumen lleva el SHA-256.
+    sha = ref.split("#sha256=", 1)[1]
+    if not any(verify_evidence(state_dir, r) and _receipt_sha(state_dir, r) == sha
+               for r in receipts):
+        raise PreviousReportError(f"{engagement_id}/{report_id}: la entrega no es de esa "
+                                  "versión")
     rel = ref.split("#sha256=", 1)[0]
     doc = json.loads((Path(state_dir) / rel).read_bytes())
     fps = tuple(sorted(f["fingerprint"] for f in doc["findings"]))
     return PreviousReport(engagement_id, report_id, ref.split("#sha256=", 1)[1], fps)
+
+
+def _receipt_sha(state_dir: Path | str, ref: str) -> str | None:
+    try:
+        doc = json.loads((Path(state_dir) / ref.split("#sha256=", 1)[0]).read_bytes())
+    except (OSError, ValueError):
+        return None
+    return doc.get("report_sha256") if isinstance(doc, dict) else None
 
 
 # ---- estado de validación desde la bitácora (D6) -------------------------------------------

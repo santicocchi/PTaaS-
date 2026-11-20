@@ -222,7 +222,7 @@ El informe DEBE incluir un aviso por hallazgo no descartado con identificador (h
 - THEN falla con `not_lab_target` y no se escribe ningún archivo
 
 ## ADDED Requirement: Hallazgos duplicados entre ejecuciones
-Cada hallazgo DEBE tener una huella determinista `fp1-<32 hex>` calculada solo desde `asset_id` y la clave (CVE o CWE), sin engagement, fechas, herramientas, puntajes ni evidencia. Dos hallazgos con la misma huella DEBEN fusionarse en uno, con la evidencia unida y todos los intentos de validación. Con informes anteriores entregados, cada hallazgo DEBE marcarse `new` o `recurring`, y las huellas anteriores ausentes DEBEN listarse como `not_observed`. Un informe anterior sin `report.delivered` con su SHA-256 en su propia bitácora NO DEBE usarse.
+Cada hallazgo DEBE tener una huella determinista `fp1-<32 hex>` calculada solo desde `asset_id` y la clave (CVE o CWE), sin engagement, fechas, herramientas, puntajes ni evidencia. Dos hallazgos con la misma huella DEBEN fusionarse en uno, con la evidencia unida y todos los intentos de validación. Con informes anteriores entregados, cada hallazgo DEBE marcarse `new` o `recurring`, y las huellas anteriores ausentes DEBEN listarse como `not_observed`. Un informe anterior sin `report.delivered` en su propia bitácora cuyo resumen de entrega tenga el SHA-256 de esa versión NO DEBE usarse.
 
 ### Scenario: misma huella en dos engagements
 - GIVEN el mismo CWE sobre el mismo activo en `eng-1` y `eng-2`
@@ -303,7 +303,7 @@ La exportación DEBE armarse en formato Generic Findings Import con solo los cam
 ### Scenario: dato sensible en la exportación
 - GIVEN un título curado que, por error, contiene un correo
 - WHEN se arma la exportación
-- THEN falla con `sensitive_data`, no se envía nada y no se escribe ningún archivo
+- THEN falla con `sensitive_data`, no se envía nada, no se escribe ningún archivo y la bitácora tiene `report.delivery` ABORTED con motivo `sensitive_data`
 
 ### Scenario: archivo del informe cambiado después de aprobar
 - GIVEN `report-v1` aprobado y su archivo modificado después
@@ -313,7 +313,7 @@ La exportación DEBE armarse en formato Generic Findings Import con solo los cam
 ### Scenario: modo sin instancia
 - GIVEN un RoE sin `report_destinations` y `report-v1` aprobado
 - WHEN se entrega con los sockets bloqueados
-- THEN se escribe `defectdojo-report-v1.json` en formato Generic Findings Import, no se abre ninguna conexión y la bitácora tiene `report.delivered` con modo `offline` y la referencia del archivo
+- THEN se escribe `defectdojo-report-v1.json` en formato Generic Findings Import, no se abre ninguna conexión y la bitácora tiene `report.delivered` con objetivo `offline` y un resumen de la entrega que tiene la referencia del archivo
 
 ## MODIFIED Requirement: Entrega con aprobación
 El informe NO DEBE entregarse, ni por API ni como archivo, sin una aprobación vigente del Reviewer para la última versión y su SHA-256, respaldada por un control `hitl.approve_delivery` en la bitácora. Ningún llamador DEBE poder declarar la aprobación con un valor propio. Sin aprobación, la entrega DEBE registrar `report.delivery` PENDING_HITL con `subject` igual al `report_id` y el engagement DEBE quedar en REPORT. Una aprobación NO DEBE darse por defecto ni por tiempo.

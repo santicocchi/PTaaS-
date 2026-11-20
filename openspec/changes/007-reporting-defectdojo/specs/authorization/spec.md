@@ -3,10 +3,10 @@
 Tests: tests/authorization/test_report_token.py, tests/authorization/test_delivery_gate.py
 
 ## ADDED Requirement: Destinos del informe en el RoE
-El RoE PUEDE tener `report_destinations`: cada destino con host, IP en un CIDR /32, puerto e id de engagement en DefectDojo. Cada host DEBE ser igual o subdominio de `targets.report_destination_domains` y cada IP DEBE estar en `targets.report_destination_cidrs` de `profiles.yaml`. Un destino fuera de esas listas DEBE rechazar el RoE. Los destinos DEBEN entrar en el `roe_sha256`.
+El RoE PUEDE tener `report_destinations`: por ahora un solo destino, con `host`, `ip` (una IP, escrita sola o como CIDR /32), `port` y `dd_engagement_id` (id del engagement en DefectDojo), sin otras claves. Cada host DEBE ser igual o subdominio de `targets.report_destination_domains` y cada IP DEBE estar en `targets.report_destination_cidrs` de `profiles.yaml`. Un destino fuera de esas listas DEBE rechazar el RoE. Los destinos DEBEN entrar en el `roe_sha256`.
 
 ### Scenario: destino fuera de la red de herramientas
-- GIVEN un RoE con el destino `defectdojo.example.com` o con la IP `203.0.113.7`
+- GIVEN un RoE con el destino `defectdojo.example.com`, con la IP `203.0.113.7` o `10.99.0.2`, o con un CIDR más grande que /32
 - WHEN se parsea
 - THEN se rechaza indicando el destino
 

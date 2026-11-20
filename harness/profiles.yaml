@@ -88,6 +88,9 @@ targets:
   # En desarrollo solo se permiten estos hosts de laboratorio (red aislada).
   lab_only_domains: ["dvwa.lab.test", "juiceshop.lab.test"]
   lab_only_cidrs: ["10.99.0.0/24"]
+  # 007, D15: únicos destinos posibles del informe (DefectDojo en la red `tools` del lab).
+  report_destination_domains: ["tools.test"]
+  report_destination_cidrs: ["10.97.0.0/24"]
 
 subfinder:
   binary: subfinder

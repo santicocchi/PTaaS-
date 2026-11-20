@@ -32,7 +32,10 @@ def test_validacion_y_entrega_requieren_aprobacion():
     e.approve("before_validate"); _avanzar_hasta(e, State.REPORT)
     with pytest.raises(TransitionError):
         e.advance()
-    e.approve("before_deliver")
+    with pytest.raises(TransitionError):            # 007: no se otorga suelto
+        e.approve("before_deliver")
+    from harness.engagement import _DELIVERY_GRANT
+    e.grant_delivery(_DELIVERY_GRANT)
     assert e.advance() == State.DELIVERED
 
 
