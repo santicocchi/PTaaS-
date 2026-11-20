@@ -143,31 +143,56 @@ def normalize_target(target: str) -> str | None:
     return host
 
 
+# 006: el sujeto de una aprobación es un `finding_id` (también nombra archivos de evidencia).
+SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+ApprovalKey = tuple[str, Phase, str, str, str]   # (engagement, fase, acción, objetivo, sujeto)
+
+
 class Guard:
     """Autorización determinista. Sin LLM, sin heurísticas."""
 
     def __init__(self, phase_allowlist: dict[Phase, set[str]],
-                 approvals: set[tuple[str, Phase, str, str]] | None = None,
+                 approvals: set[ApprovalKey] | None = None,
                  hitl_phases: set[Phase] | None = None):
         from harness.policy_loader import hitl_phases as policy_hitl_phases
         self.phase_allowlist = phase_allowlist
-        self._approvals: set[tuple[str, Phase, str, str]] = approvals or set()
+        self._approvals: set[ApprovalKey] = approvals or set()
         # Lo decide la política, no el agente que arma la Action (red team R13).
         self.hitl_phases = policy_hitl_phases() if hitl_phases is None else hitl_phases
 
     def needs_approval(self, action: Action, token: ScopeToken) -> bool:
         return action.requires_human_approval or token.phase in self.hitl_phases
 
-    def approve(self, action_name: str, target: str, *, engagement_id: str, phase: Phase) -> None:
-        """Registra una aprobación humana para (engagement, fase, acción, objetivo)."""
+    @staticmethod
+    def _key(action_name: str, target: str, engagement_id: str, phase: Phase,
+             subject: str) -> ApprovalKey:
         canon = normalize_target(target)
         if canon is None:
             raise ValueError(f"objetivo no interpretable: {target!r}")
-        self._approvals.add((engagement_id, phase, action_name, canon))
+        if not SUBJECT_RE.match(subject):
+            raise ValueError(f"sujeto inválido: {subject!r}")
+        return (engagement_id, phase, action_name, canon, subject)
 
-    def approved(self, action: Action, target: str, token: ScopeToken) -> bool:
+    def approve(self, action_name: str, target: str, *, engagement_id: str, phase: Phase,
+                subject: str) -> None:
+        """Registra una aprobación humana para (engagement, fase, acción, objetivo, sujeto).
+
+        El sujeto es el hallazgo (006, D2): aprobar uno no aprueba otro del mismo host.
+        """
+        self._approvals.add(self._key(action_name, target, engagement_id, phase, subject))
+
+    def withdraw(self, action_name: str, target: str, *, engagement_id: str, phase: Phase,
+                 subject: str) -> None:
+        """Retira una aprobación (vencida o ya usada). Retirar una que no existe no falla."""
+        self._approvals.discard(self._key(action_name, target, engagement_id, phase, subject))
+
+    def approved(self, action: Action, target: str, token: ScopeToken,
+                 subject: str | None) -> bool:
+        if subject is None:
+            return False
         canon = normalize_target(target)
-        return (token.engagement_id, token.phase, action.name, canon) in self._approvals
+        return (token.engagement_id, token.phase, action.name, canon,
+                subject) in self._approvals
 
     def check(self, action: Action, target: str, token: ScopeToken) -> str | None:
         """None si la acción está permitida; si no, el motivo (de BLOCK_REASONS)."""
@@ -411,8 +436,9 @@ class Harness:
         self.audit.record_kill(engagement_id, agent)
         self.killswitch.engage(engagement_id)
 
-    def invoke(self, agent: str, action: Action, target: str,
-               token: ScopeToken) -> dict[str, Any]:
+    def invoke(self, agent: str, action: Action, target: str, token: ScopeToken,
+               subject: str | None = None) -> dict[str, Any]:
+        """`subject` es el hallazgo al que se ata el gate humano (006, D2)."""
         try:
             self.audit.verify_integrity()       # con la cadena rota no se actúa
         except AuditIntegrityError:
@@ -457,10 +483,14 @@ class Harness:
                 raise ScopeViolation(f"{canon} resuelve fuera de alcance: {reason}", reason)
             # 004: la herramienta usa estas IP y no vuelve a resolver (DNS rebinding).
             addresses = tuple(sorted({str(normalize_target(ip)) for ip in ips}))
-        if self.guard.needs_approval(action, token) and not self.guard.approved(action, canon,
-                                                                                  token):
-            self.audit.record(agent, action, canon, token, Result.PENDING_HITL)
-            return {"status": "PENDING_HITL"}
+        if self.guard.needs_approval(action, token):
+            if subject is None:               # 006: nadie valida "en general", solo un hallazgo
+                self.audit.record(agent, action, canon, token, Result.BLOCKED, "missing_subject")
+                raise ScopeViolation(f"{action.name} con gate humano sin sujeto",
+                                     "missing_subject")
+            if not self.guard.approved(action, canon, token, subject):
+                self.audit.record(agent, action, canon, token, Result.PENDING_HITL)
+                return {"status": "PENDING_HITL"}
         for address in addresses:             # puede esperar: el kill switch se mira después
             self.limiter.acquire(address)
         if self.killswitch.is_engaged(token.engagement_id):   # pudo activarse mientras tanto
@@ -470,6 +500,10 @@ class Harness:
         # registrar (otro engagement, base bloqueada, disco lleno), la herramienta no corre.
         self.audit.record(agent, action, canon, token, Result.OK)
         try:
+            run_subject = getattr(adapter, "run_subject", None)
+            if subject is not None and callable(run_subject):   # adaptador atado al hallazgo
+                out: dict[str, Any] = run_subject(action, canon, token, addresses, subject)
+                return out
             return adapter.run(action, canon, token, addresses)
         except Exception:  # noqa: BLE001 - el OK ya está escrito: se cierra con ABORTED
             self.audit.record(agent, action, canon, token, Result.ABORTED, "adapter_error")

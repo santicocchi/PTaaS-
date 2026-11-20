@@ -12,7 +12,7 @@
 - [ ] 2.4 Orquestación del loop C con `decide_validation` (D1, D9)
 - [ ] 2.5 CLI de aprobación: listar hallazgos pendientes, aprobar o rechazar con motivo (D6)
 - [ ] 2.6 Registrar aprobación, verificación elegida y resultado en bitácora
-- [ ] 2.7 Aprobación HITL con `subject` en `Guard` y `Harness.invoke` (D2)
+- [x] 2.7 Aprobación HITL con `subject` en `Guard` y `Harness.invoke` (D2)
 - [ ] 2.8 `ApprovalStore` append-only, vencimiento y timeout del Reviewer (D5)
 - [ ] 2.9 Evidencia redactada con hash en bitácora (D7)
 - [ ] 2.10 `proposed_by` y evaluador conocido en el catálogo (D10)
