@@ -4,7 +4,9 @@
     python -m demo.pipeline --lab      # laboratorio real, desde el contenedor `runner`
 
 Las tres fases usan el mismo Harness y el mismo engagement, con un token por fase. Cada token
-sale del RoE de `demo/roe-pipeline.yaml`, que autoriza recon, correlate y analyze (y nada más).
+sale del RoE de `demo/roe-pipeline.yaml`, que autoriza recon, correlate, analyze y validate.
+La validación (loop C) no corre acá: corre `demo/validation.py` en el host del laboratorio, que
+tiene docker, a partir de la entrega `<engagement>.handoff.json` que deja este script.
 
 - Relevamiento: el loop A de `demo/loop_a.py` (subfinder, httpx, nmap).
 - Correlación: versiones del grafo contra los snapshots locales de `data/feeds/` (NVD y EPSS).
@@ -19,10 +21,12 @@ En simulación lo único falso es la salida de cada herramienta, la API de ZAP y
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
 import time
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -37,10 +41,18 @@ from harness.adapters.nmap_adapter import NmapServiceScan
 from harness.adapters.nuclei_adapter import NucleiSafeTemplates
 from harness.adapters.subfinder_adapter import SubfinderEnum
 from harness.adapters.zap_adapter import ENDPOINTS, ZapBaselineScan, ZapClient
-from harness.analysis import AnalysisLoop, FindingStore
+from harness.analysis import AnalysisLoop, AnalysisResult, FindingStore
 from harness.assets import AssetGraph
 from harness.audit import SqliteAuditLog, verify_file
-from harness.contracts import Guard, Harness, KillSwitch, Phase, ToolAdapter, system_resolver
+from harness.contracts import (
+    Guard,
+    Harness,
+    KillSwitch,
+    Phase,
+    Result,
+    ToolAdapter,
+    system_resolver,
+)
 from harness.correlate import Correlator, CveLookup, CweMap, EpssLookup, host_of, host_view
 from harness.engagement import Engagement
 from harness.feeds import load_feeds_by_policy
@@ -53,6 +65,7 @@ from harness.tokens import TokenIssuer
 ROOT = Path(__file__).resolve().parent
 ROE_TEMPLATE = ROOT / "roe-pipeline.yaml"
 TEMPLATES = ALLOWLIST
+HANDOFF_ACTION = "handoff.written"       # entrega del análisis al loop C (demo/validation.py)
 
 # Salida de nuclei v3.11.1 (-jsonl) contra el DVWA del laboratorio, con la IP de la simulación.
 # Solo se usa si hay templates aprobados; si no, nuclei no corre.
@@ -100,7 +113,7 @@ class SimZap:
         if path.endswith("/recordsToScan/"):
             return {"recordsToScan": "0"}
         if path.endswith("/core/view/alerts/"):
-            base = params["baseurl"]
+            base = params["baseurl"].rstrip("/")   # el adaptador la manda con "/" final
             return {"alerts": [{"pluginId": p, "alert": name, "risk": risk, "confidence": conf,
                                 "cweid": cwe, "url": base + path_, "evidence": ev, "param": ""}
                                for p, name, risk, conf, cwe, path_, ev in SIM_ZAP_ALERTS]}
@@ -133,6 +146,30 @@ def build_tools(graph: AssetGraph, lab: bool, zap: ZapClient | None) -> dict[str
                         sleep=time.sleep if lab else (lambda s: None)),
     ]
     return {a.name: a for a in adapters}
+
+
+def write_handoff(out: Path, engagement_id: str, roe_source: dict[str, Any],
+                  web_hosts: list[str], result: AnalysisResult, store: FindingStore,
+                  audit: SqliteAuditLog, *, lab: bool) -> Path:
+    """Entrega del análisis al loop C: RoE, modo, candidatos, vulnerabilidades y observaciones.
+
+    El loop C corre en otro proceso, en el host, que tiene docker. Su SHA-256 queda en la
+    bitácora, pero eso solo detecta una edición torpe: desde el runner se puede escribir
+    demo/out entero. Por eso demo/validation.py además compara el RoE con la plantilla (que el
+    runner monta de solo lectura) y, una vez importada, trabaja con su copia en demo/state/.
+    """
+    path = out / f"{engagement_id}.handoff.json"
+    data = {"engagement_id": engagement_id, "mode": "lab" if lab else "sim",
+            "roe": roe_source, "web_hosts": web_hosts,
+            "candidates": [asdict(c) for c in result.candidates],
+            "vulns": [asdict(v) for v in result.vulns],
+            "observations": [asdict(o) for o in store.observations()]}
+    raw = json.dumps(data, ensure_ascii=False, indent=1, sort_keys=True).encode("utf-8")
+    path.write_bytes(raw)
+    path.chmod(0o644)                    # en el runner el umask deja los archivos en 666
+    audit.record_control(engagement_id, "orchestrator", HANDOFF_ACTION, path.name, Result.OK,
+                         evidence=f"{path.name}#sha256={hashlib.sha256(raw).hexdigest()}")
+    return path
 
 
 def _phase(title: str) -> None:
@@ -199,6 +236,8 @@ def main(argv: list[str] | None = None) -> int:
                                             else f"host:{h}"),
                         criticality_of=lambda h: criticality_of(roe, h))
     result = loop.run(corr.candidates, web_hosts)
+    handoff = write_handoff(args.out, engagement_id, roe.source, web_hosts, result, store, audit,
+                            lab=args.lab)
     store.close()
     print(f"   {result.reason}; {len(result.vulns)} vulnerabilidades priorizadas\n")
     cands = {c.id: c for c in result.candidates}
@@ -219,11 +258,16 @@ def main(argv: list[str] | None = None) -> int:
         by_phase[e["phase"]] = by_phase.get(e["phase"], 0) + 1
     print("\nBitácora: " + ", ".join(f"{n} de {p}" for p, n in sorted(by_phase.items())))
     for e in entries:
-        if e["phase"] == "control" and e["action"] != "asset.discovered":
+        if e["phase"] == "control" and e["action"] not in ("asset.discovered",
+                                                             HANDOFF_ACTION):
             print(f"   {warn(e['action'])} {e['target']} → {e['result']} {e.get('reason') or ''}")
     audit.close()
     error = verify_file(audit.path)
     print(ok("OK: cadena íntegra") if error is None else bad(f"CADENA ROTA: {error}"))
+    print(f"\nPara validar (loop C, en el host del laboratorio):\n"
+          f"  python -m demo.validation{' --lab' if args.lab else ''} --engagement {engagement_id}"
+          f" --approve-phase --reviewer <tu-usuario>\n"
+          f"{dim('  (entrega al loop C: ' + handoff.name + ', con su SHA-256 en la bitácora)')}")
     return 0 if error is None else 1
 
 
