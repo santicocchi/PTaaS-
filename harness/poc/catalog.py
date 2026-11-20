@@ -17,9 +17,28 @@ from typing import Any
 
 import yaml
 
+from harness.contracts import normalize_target
+
 _CATALOG = Path(__file__).resolve().parent / "catalog.yaml"
 _REQUIRED = {"id", "version", "title", "cwe", "kind", "method", "parameters",
              "evaluator", "lab_only", "proposed_by", "approved_by", "approved_at"}
+
+
+# `lab_targets` del catálogo → FQDN exactos del laboratorio (lab/docker-compose.yml, alias de
+# la red `lab`; harness/profiles.yaml, targets.lab_only_domains). Se compara el host canónico
+# completo: nada de prefijos, sufijos ni caracteres ignorados (revisión 006).
+LAB_TARGET_HOSTS: dict[str, frozenset[str]] = {
+    "dvwa": frozenset({"dvwa.lab.test"}),
+    "juice-shop": frozenset({"juiceshop.lab.test"}),
+}
+
+
+def host_in_lab_targets(host: str, lab_targets: list[str]) -> bool:
+    """True si el host canónico es uno de los FQDN de alguno de esos `lab_targets`."""
+    canon = normalize_target(host) if host else None
+    if canon is None:
+        return False
+    return any(canon in LAB_TARGET_HOSTS.get(t, frozenset()) for t in lab_targets)
 
 
 class NotInCatalog(Exception): ...
@@ -75,6 +94,9 @@ def validate_entries(entries: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
         proposer = str(e["proposed_by"] or "").strip().lower()
         if not proposer or proposer == str(e["approved_by"]).strip().lower():
             raise InvalidCatalog(f"{e['id']}: nadie aprueba su propia verificación")
+        unknown = set(e.get("lab_targets") or []) - set(LAB_TARGET_HOSTS)
+        if unknown:
+            raise InvalidCatalog(f"{e['id']}: lab_targets desconocidos {sorted(unknown)}")
         if e["evaluator"] not in EVALUATORS:          # un evaluador nuevo es código (D10)
             raise InvalidCatalog(f"{e['id']}: evaluador desconocido {e['evaluator']!r}")
         if e["id"] in out:

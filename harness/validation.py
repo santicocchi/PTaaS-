@@ -38,6 +38,7 @@ from harness.contracts import (
 )
 from harness.engagement import Engagement, State
 from harness.loops import decide_validation
+from harness.poc.catalog import host_in_lab_targets
 from harness.policy_loader import load_policy
 from harness.sandbox import SandboxLimits, load_limits
 from harness.schemas import CandidateFinding, PrioritizedVuln
@@ -70,13 +71,6 @@ class ValidationResult:
 
 class _Stop(Exception):
     """Detiene el loop para todo el engagement."""
-
-
-def _same_target(host: str, lab_target: str) -> bool:
-    """`dvwa.lab.test` ↔ `dvwa`, `juiceshop.lab.test` ↔ `juice-shop` (primer label del host)."""
-    def norm(x: str) -> str:
-        return x.lower().replace("-", "")
-    return norm(host.split(".", 1)[0]) == norm(lab_target)
 
 
 class ValidationLoop:
@@ -210,7 +204,7 @@ class ValidationLoop:
         for poc_id, entry in sorted(self.catalog.items()):
             if entry["cwe"] != c.cwe:
                 continue
-            if not any(_same_target(c.host, t) for t in entry.get("lab_targets") or []):
+            if not host_in_lab_targets(c.host, list(entry.get("lab_targets") or [])):
                 continue
             params = self._params(c, list(entry["parameters"]))
             if params is not None:

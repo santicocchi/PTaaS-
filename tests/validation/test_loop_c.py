@@ -384,3 +384,36 @@ def test_tope_por_hallazgo_entre_corridas(tmp_path):
         lab.audit.record_control(ENG, "v", "validation.attempt", fid, Result.OK)
     res = lab.run()
     assert lab.docker.runs() == [] and res.outcomes[fid].status == "not_validated"
+
+
+# --- lab_targets: host canónico completo contra un mapa explícito (revisión de seguridad) ----
+@pytest.mark.parametrize("host,expected", [
+    ("dvwa.lab.test", True), ("DVWA.lab.test.", True), ("juiceshop.lab.test", True),
+    ("dvwa.evil.example", False), ("d-v-w-a.lab.test", False), ("dvwa", False),
+    ("dvwa.lab.test.evil.example", False), ("xdvwa.lab.test", False),
+    ("juice-shop.lab.test", False), ("", False),
+])
+def test_host_en_lab_targets(host, expected):
+    from harness.poc.catalog import host_in_lab_targets
+    assert host_in_lab_targets(host, ["dvwa", "juice-shop"]) is expected
+
+
+def test_lab_target_desconocido_no_habilita_nada():
+    from harness.poc.catalog import host_in_lab_targets
+    assert host_in_lab_targets("dvwa.lab.test", ["dvwa.lab.test", "dv-wa"]) is False
+
+
+def test_lab_target_desconocido_en_el_catalogo_se_rechaza():
+    from harness.poc.catalog import InvalidCatalog, validate_entries
+    base = {**load_catalog()["POC-CSP-001"], "lab_targets": ["dvwa", "evil"]}
+    with pytest.raises(InvalidCatalog, match="evil"):
+        validate_entries([base])
+
+
+@pytest.mark.parametrize("host", ["dvwa.evil.example", "d-v-w-a.lab.test"])
+def test_host_parecido_no_tiene_entrada(tmp_path, host):
+    lab = Lab(tmp_path)
+    fid = lab.finding("F-1", host=host)
+    lab.approve(fid)
+    res = lab.run()
+    assert res.outcomes[fid].reason == "no_catalog_entry" and lab.docker.runs() == []
