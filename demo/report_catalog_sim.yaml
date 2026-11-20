@@ -21,7 +21,7 @@ entries:
       a los directorios fuera del sitio publicado.
     references: [WSTG-ATHZ-01]
     cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N"
-    author: santiago
+    author: claude
     reviewer: santiago
     date: "2026-11-20"
   CVE-2099-0002:
@@ -40,6 +40,6 @@ entries:
       para esa versión.
     references: [WSTG-INPV-00]
     cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N"
-    author: santiago
+    author: claude
     reviewer: santiago
     date: "2026-11-20"

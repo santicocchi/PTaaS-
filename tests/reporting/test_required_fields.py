@@ -114,11 +114,21 @@ def test_impacto_curado_con_jerga(tmp_path):
     assert ("f-1", "business_impact") in exc.value.missing
 
 
-def test_tabla_del_repo_sin_revisar_no_vale():
+def test_tabla_del_repo_revisada_y_valida():
+    """Las entradas del repo están revisadas (por alguien distinto del autor) y valen."""
     from harness.report_catalog import ReportCatalog, entry_problems
     catalog = ReportCatalog.load()
     assert catalog.raw
-    assert all(entry_problems(k, v) == ["reviewer"] for k, v in catalog.raw.items())
+    assert {k: entry_problems(k, v) for k, v in catalog.raw.items()} == {
+        k: [] for k in catalog.raw}
+
+
+def test_tabla_sin_revisar_no_vale():
+    from harness.report_catalog import ReportCatalog, entry_problems
+    raw = ReportCatalog.load().raw
+    for k, v in raw.items():
+        assert entry_problems(k, {**v, "reviewer": "pendiente"}) == ["reviewer"]
+        assert entry_problems(k, {**v, "reviewer": v["author"].upper()}) == ["reviewer"]
 
 
 # ---- el CWE lo pone la tabla curada cuando el feed no lo trae (decisión del 20/11) ----------
