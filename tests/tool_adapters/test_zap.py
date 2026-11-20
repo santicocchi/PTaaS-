@@ -265,3 +265,13 @@ def test_enlace_a_otro_host_queda_fuera_del_contexto(url, inside):
     run(zap)
     (inc,) = zap.params("/includeInContext/")
     assert bool(re.match(inc["regex"], url)) is inside
+
+
+def test_spider_lee_robots_txt_antes_de_escanear():
+    """Change 010, D5: lo que el sitio no linkea pero declara en robots.txt entra al recon."""
+    zap = FakeZap()
+    run(zap)
+    paths = zap.paths()
+    i = paths.index("/JSON/spider/action/setOptionParseRobotsTxt/")
+    assert i < paths.index("/JSON/spider/action/scan/")
+    assert zap.params("/setOptionParseRobotsTxt/") == [{"Boolean": "true"}]

@@ -1,0 +1,31 @@
+# RoE del práctico integrador del curso (change 010). Solo laboratorio propio, red aislada.
+#
+# Reglas del engagement de la cátedra: únicamente el host `phantomcorp`, nada destructivo.
+# Acá eso es: un solo dominio, un /32 dentro de 10.99.0.0/24, DVWA y Juice Shop excluidos
+# y solo fases de recon, correlación, análisis y verificación inerte (sin explotación).
+#
+# `engagement_id`, `window` y `approval.roe_sha256` se completan al correr, igual que
+# demo/roe-lab.yaml. En el engagement real el reviewer fija la ventana y calcula el hash con:
+#
+#   python -m harness.roe hash demo/roe-integrador.yaml
+engagement_id: se-completa-al-correr
+scope:
+  cidrs: ["10.99.0.12/32"]
+  domains: ["phantomcorp.lab.test"]
+exclusions:
+  # Fuera del encargo: la exclusión prevalece aunque alguien amplíe el alcance por error.
+  # Por nombre y por IP (fijas en lab/docker-compose.yml).
+  hosts: ["dvwa.lab.test", "juiceshop.lab.test", "10.99.0.10", "10.99.0.11"]
+window:
+  start: se-completa-al-correr
+  end: se-completa-al-correr
+phases: [recon, correlate, analyze, validate]
+criticality:
+  # Sistema "Clientes": guarda datos personales de clientes (crown jewels del encargo).
+  phantomcorp.lab.test: 5
+emergency_contacts:
+  - name: Responsable del laboratorio
+    channel: "lab-ptaas (canal interno del equipo)"
+approval:
+  approver: reviewer@lab
+  roe_sha256: se-completa-al-correr

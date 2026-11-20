@@ -5,67 +5,67 @@
 # revisión del security-reviewer y aprobación humana registrada. Quien aprueba
 # (`approved_by`) no puede ser quien propuso (`proposed_by`), y el `evaluator` tiene que
 # existir en EVALUATORS (harness/poc/catalog.py).
-catalog_version: "0.2.0"   # 006: proposed_by en cada entrada
+catalog_version: "0.3.0"   # 006: proposed_by en cada entrada · 010: phantomcorp en lab_targets
 
 entries:
   - id: POC-HDR-001
-    version: "1.0.0"
+    version: "1.1.0"
     title: Falta de protección contra clickjacking (X-Frame-Options / frame-ancestors)
     cwe: CWE-1021
     kind: inert_check
     method: GET
     parameters: [base_url, path]
     evaluator: header_missing_frame_protection
-    lab_targets: [dvwa, juice-shop]
+    lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
-    proposed_by: author@lab
-    approved_by: reviewer@lab
-    approved_at: "2026-10-30"
+    proposed_by: claude      # 010: suma phantomcorp a lab_targets
+    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
+    approved_at: ""
 
   - id: POC-CSP-001
-    version: "1.0.0"
+    version: "1.1.0"
     title: Ausencia de Content-Security-Policy
     cwe: CWE-693
     kind: inert_check
     method: GET
     parameters: [base_url, path]
     evaluator: header_missing_csp
-    lab_targets: [dvwa, juice-shop]
+    lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
-    proposed_by: author@lab
-    approved_by: reviewer@lab
-    approved_at: "2026-10-30"
+    proposed_by: claude      # 010: suma phantomcorp a lab_targets
+    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
+    approved_at: ""
 
   - id: POC-COOKIE-001
-    version: "1.0.0"
+    version: "1.1.0"
     title: Cookie de sesión sin flags Secure / HttpOnly / SameSite
     cwe: CWE-614
     kind: inert_check
     method: GET
     parameters: [base_url, path]
     evaluator: cookie_flags_missing
-    lab_targets: [dvwa, juice-shop]
+    lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
-    proposed_by: author@lab
-    approved_by: reviewer@lab
-    approved_at: "2026-10-30"
+    proposed_by: claude      # 010: suma phantomcorp a lab_targets
+    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
+    approved_at: ""
 
   - id: POC-DIRLIST-001
-    version: "1.0.0"
+    version: "1.1.0"
     title: Listado de directorio habilitado
     cwe: CWE-548
     kind: inert_check
     method: GET
     parameters: [base_url, path]
     evaluator: directory_listing_enabled
-    lab_targets: [dvwa, juice-shop]
+    lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
-    proposed_by: author@lab
-    approved_by: reviewer@lab
-    approved_at: "2026-10-30"
+    proposed_by: claude      # 010: suma phantomcorp a lab_targets
+    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
+    approved_at: ""
 
   - id: POC-REFLECT-001
-    version: "1.0.0"
+    version: "1.1.0"
     title: Reflexión de entrada sin codificar (verificación con canario inerte)
     cwe: CWE-79
     kind: inert_check
@@ -74,22 +74,22 @@ entries:
     # marcado ejecutable. Solo se observa si la respuesta lo refleja sin codificar.
     parameters: [base_url, path, param_name]
     evaluator: input_reflected_unencoded
-    lab_targets: [dvwa, juice-shop]
+    lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
-    proposed_by: author@lab
-    approved_by: reviewer@lab
-    approved_at: "2026-10-30"
+    proposed_by: claude      # 010: suma phantomcorp a lab_targets
+    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
+    approved_at: ""
 
   - id: POC-ERRDISC-001
-    version: "1.0.0"
+    version: "1.1.0"
     title: Divulgación de trazas de error / versiones en respuestas de error
     cwe: CWE-209
     kind: inert_check
     method: GET
     parameters: [base_url, path]
     evaluator: verbose_error_disclosure
-    lab_targets: [dvwa, juice-shop]
+    lab_targets: [dvwa, juice-shop, phantomcorp]
     lab_only: true
-    proposed_by: author@lab
-    approved_by: reviewer@lab
-    approved_at: "2026-10-30"
+    proposed_by: claude      # 010: suma phantomcorp a lab_targets
+    approved_by: ""          # lo firma Santi (no puede ser quien propuso)
+    approved_at: ""

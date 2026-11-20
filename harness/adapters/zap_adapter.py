@@ -8,7 +8,8 @@ conjunto FIJO de endpoints, sin ninguno de escaneo activo. Por cada invocación:
 2. contexto que incluye solo `http://<ip>(:<puerto>)?/`;
 3. regla del replacer que fija `Host: <nombre>` (la conexión va a la IP que validó el Harness);
 4. rate limit de ZAP con el valor de policy.yaml;
-5. spider acotado (hilos, profundidad, duración), limitado al contexto y SIN enviar formularios;
+5. spider acotado (hilos, profundidad, duración), limitado al contexto, SIN enviar formularios
+   y leyendo robots.txt (010);
 6. espera del escaneo pasivo;
 7. lectura de alertas de esa IP;
 8. limpieza (spider, contexto, reglas y sesión), pase lo que pase.
@@ -52,6 +53,7 @@ ENDPOINTS = frozenset({
     "/JSON/spider/action/setOptionMaxChildren/",
     "/JSON/spider/action/setOptionProcessForm/",
     "/JSON/spider/action/setOptionPostForm/",
+    "/JSON/spider/action/setOptionParseRobotsTxt/",
     "/JSON/spider/action/scan/",
     "/JSON/spider/action/stop/",
     "/JSON/spider/view/status/",
@@ -236,6 +238,9 @@ class ZapBaselineScan:
             # defecto, y eso puede iniciar sesión o cambiar estado en el objetivo.
             client.call("/JSON/spider/action/setOptionProcessForm/", {"Boolean": "false"})
             client.call("/JSON/spider/action/setOptionPostForm/", {"Boolean": "false"})
+            # 010, D5: leer robots.txt (un GET más dentro del contexto). Lo que el sitio no
+            # linkea pero declara ahí también es superficie; fijo, sin depender del default.
+            client.call("/JSON/spider/action/setOptionParseRobotsTxt/", {"Boolean": "true"})
             scan = client.call("/JSON/spider/action/scan/", {
                 "url": base, "contextName": name, "subtreeOnly": "true", "recurse": "true",
                 "maxChildren": str(spider["max_children"])})
