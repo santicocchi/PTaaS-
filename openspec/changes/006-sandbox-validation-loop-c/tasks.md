@@ -6,8 +6,8 @@
 - [ ] 1.3 Revisión cruzada (PR de spec)
 
 ## Implementación
-- [ ] 2.1 Tests que fallan para el `Sender` aislado (sin red externa, sin estado)
-- [ ] 2.2 Sandbox efímero: contenedor en red interna que implementa `Sender` (D3), imagen `lab/sandbox/`
+- [x] 2.1 Tests que fallan para el `Sender` aislado (sin red externa, sin estado)
+- [x] 2.2 Sandbox efímero: contenedor en red interna que implementa `Sender` (D3), imagen `lab/sandbox/`
 - [ ] 2.3 Límites de tiempo, tamaño y cantidad de solicitudes (D4)
 - [ ] 2.4 Orquestación del loop C con `decide_validation` (D1, D9)
 - [ ] 2.5 CLI de aprobación: listar hallazgos pendientes, aprobar o rechazar con motivo (D6)
@@ -20,8 +20,8 @@
 ## Verificación
 - [ ] 3.1 Test: sin aprobación no se invoca el `Sender`
 - [ ] 3.2 Test: verificación inexistente en catálogo → "no validado"
-- [ ] 3.3 Test: el sandbox no alcanza hosts fuera del lab
-- [ ] 3.4 Test: el sandbox se destruye aunque falle la verificación
+- [x] 3.3 Test: el sandbox no alcanza hosts fuera del lab
+- [x] 3.4 Test: el sandbox se destruye aunque falle la verificación
 - [ ] 3.5 Evals de validación ampliadas con casos donde la respuesta correcta es no actuar
 - [ ] 3.6 `security-reviewer` sobre la implementación
 - [ ] 3.7 Archivar deltas en `openspec/specs/`
