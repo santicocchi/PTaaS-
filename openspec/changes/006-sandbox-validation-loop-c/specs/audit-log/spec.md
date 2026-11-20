@@ -16,7 +16,6 @@ La bitácora DEBE aceptar `sandbox_error` como motivo de error de herramienta y 
 - THEN se rechaza
 
 ### Scenario: sujeto malformado
-- GIVEN una invocación con `subject` que no es un `finding_id` válido (por ejemplo `F-1
-X` o un texto de 500 caracteres)
+- GIVEN una invocación con `subject` que no es un `finding_id` válido (por ejemplo `F-1` seguido de un salto de línea y `X` o un texto de 500 caracteres)
 - WHEN se invoca, en cualquier fase y aun con el kill switch activo
 - THEN queda exactamente un registro BLOCKED con motivo `invalid_subject`, sin `subject`, y el adaptador no se ejecuta
