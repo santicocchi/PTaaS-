@@ -18,6 +18,11 @@ def item(finding_id="F-1", host="dvwa.lab.test", at=T0):
                      params={"base_url": f"http://{host}", "path": "/"}, enqueued_at=at)
 
 
+def rh(fid, store=None):
+    """Hash corto de la solicitud que el Reviewer vio en `list`."""
+    return (store.item(fid) if store is not None else item(fid)).request_hash
+
+
 @pytest.fixture
 def lab(tmp_path, monkeypatch):
     def forbidden(*a, **k):
@@ -50,27 +55,27 @@ def test_limites_de_revision_de_la_politica():
 @pytest.mark.parametrize("reason", ["", "   "])
 def test_aprobar_sin_motivo(lab, reason):
     store, cli, audit = lab
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", reason) != 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason", reason) != 0
     assert store.decisions("F-1") == [] and audit() == []
 
 
 def test_aprobar_sin_reviewer_es_error_de_uso(lab):
     _, cli, audit = lab
     with pytest.raises(SystemExit) as exc:
-        cli("approve", "F-1", "--reason", "ok")
+        cli("approve", "F-1", "--request", rh("F-1"), "--reason", "ok")
     assert exc.value.code == 2 and audit() == []
 
 
 @pytest.mark.parametrize("reviewer", ["", " ", "ana bob", "x" * 100])
 def test_reviewer_invalido(lab, reviewer):
     store, cli, audit = lab
-    assert cli("approve", "F-1", "--reviewer", reviewer, "--reason", "ok") != 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", reviewer, "--reason", "ok") != 0
     assert store.decisions("F-1") == [] and audit() == []
 
 
 def test_aprobar_un_hallazgo_que_no_esta_en_cola(lab, capsys):
     store, cli, audit = lab
-    assert cli("approve", "F-999", "--reviewer", "ana", "--reason", "ok") != 0
+    assert cli("approve", "F-999", "--request", rh("F-999"), "--reviewer", "ana", "--reason", "ok") != 0
     assert "F-999" in capsys.readouterr().err
     assert store.decisions("F-999") == [] and audit() == []
 
@@ -95,7 +100,7 @@ def test_decision_registrada(lab, tmp_path):
 
 def test_aprobacion_registrada_con_vencimiento(lab):
     store, cli, audit = lab
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "en alcance") == 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason", "en alcance") == 0
     (d,) = store.decisions("F-1")
     assert d.decision == "approved" and d.expires_at == T0 + 60 + 60 * 60
     assert [e["action"] for e in audit()] == ["hitl.approve"]
@@ -105,15 +110,15 @@ def test_aprobacion_registrada_con_vencimiento(lab):
 
 def test_aprobacion_vigente_no_se_vuelve_a_aprobar(lab):
     store, cli, audit = lab
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
-    assert cli("approve", "F-1", "--reviewer", "bob", "--reason", "otra vez") != 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason", "ok") == 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "bob", "--reason", "otra vez") != 0
     assert len(store.decisions("F-1")) == 1 and len(audit()) == 1
 
 
 def test_rechazo_revoca_una_aprobacion_vigente(lab):
     """Revisión M3: la última fila manda; un reject sobre una aprobación vigente la revoca."""
     store, cli, audit = lab
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason", "ok") == 0
     assert cli("reject", "F-1", "--reviewer", "bob", "--reason", "revocada") == 0
     assert store.status("F-1", T0 + 120) == "rejected"
     assert store.current("F-1", T0 + 120).decision == "rejected"
@@ -124,24 +129,24 @@ def test_rechazo_revoca_una_aprobacion_vigente(lab):
 def test_rechazo_no_se_vuelve_a_pedir(lab):
     store, cli, _ = lab
     assert cli("reject", "F-1", "--reviewer", "ana", "--reason", "no") == 0
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "sí", now=T0 + 10**6) != 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason", "sí", now=T0 + 10**6) != 0
     assert store.status("F-1", T0 + 10**6) == "rejected"
 
 
 def test_aprobacion_vencida_se_puede_renovar(lab):
     store, cli, _ = lab
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason", "ok") == 0
     later = T0 + 60 + 61 * 60
     assert store.status("F-1", later) == "expired"
     assert store.current("F-1", later) is None              # vencida = ninguna
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "de nuevo", now=later) == 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason", "de nuevo", now=later) == 0
     assert store.status("F-1", later) == "approved"
 
 
 def test_hallazgo_cerrado_no_se_aprueba(lab):
     store, cli, audit = lab
     store.close("F-1", "not_validated", "reviewer_timeout", T0 + 3600)
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "tarde") != 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason", "tarde") != 0
     assert audit() == []
 
 
@@ -149,7 +154,7 @@ def test_hallazgo_cerrado_no_se_aprueba(lab):
 def test_listar(lab, capsys):
     store, cli, _ = lab
     store.enqueue(item("F-3"))
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason", "ok") == 0
     assert cli("reject", "F-2", "--reviewer", "ana", "--reason", "no") == 0
     capsys.readouterr()
     assert cli("list") == 0
@@ -185,29 +190,92 @@ def test_engagement_invalido(tmp_path):
         ApprovalStore.open("../x", tmp_path)
 
 
-# --- revisión M1/M2: la decisión queda atada al hallazgo en la bitácora ----------------------
-def test_control_con_subject_y_referencia_a_la_decision(lab):
-    from harness.approvals import decision_audited, decision_ref
+# --- revisión M1/M2: la bitácora manda sobre la decisión vigente ------------------------------
+def test_control_con_subject_y_referencia_a_la_fila(lab):
+    from harness.approvals import audited_decision, decision_ref
     store, cli, audit = lab
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason",
+               "ok") == 0
     (d,) = store.decisions("F-1")
     (e,) = audit()
     assert e["subject"] == "F-1" and e["agent"] == "reviewer:ana"
-    assert e["evidence"] == decision_ref(ENG, d)
-    assert decision_audited(audit(), ENG, d)
+    assert e["evidence"] == decision_ref(ENG, d) and d.seq >= 1
+    assert audited_decision(store, audit(), ENG, "F-1") == d
 
 
-def test_fila_insertada_sin_la_cli_no_esta_auditada(lab):
-    from harness.approvals import Decision, decision_audited
+def test_fila_insertada_sin_la_cli_no_cuenta(lab):
+    from harness.approvals import audited_decision
+    store, _, audit = lab
+    store.decide("F-1", "approved", "ana", "ok", T0, request=rh("F-1"))   # sin bitácora
+    assert audited_decision(store, audit(), ENG, "F-1") is None
+
+
+def _copy_approved_row(store):
+    con = sqlite3.connect(store.path)
+    con.execute("INSERT INTO decisions (finding_id, decision, reviewer, reason, decided_at, "
+                "expires_at, revision, request) SELECT finding_id, decision, reviewer, reason, "
+                "decided_at, expires_at, revision, request FROM decisions "
+                "WHERE decision = 'approved'")
+    con.commit()
+    con.close()
+
+
+def test_aprobacion_revocada_no_revive_con_una_copia(lab):
+    """Revisión automática (1): approve, reject y una copia de la fila aprobada en sqlite."""
+    from harness.approvals import audited_decision
     store, cli, audit = lab
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
-    (d,) = store.decisions("F-1")
-    forged = [Decision("F-2", "approved", "ana", "ok", d.decided_at, d.expires_at, 2),
-              Decision("F-1", "approved", "ana", "ok", d.decided_at, d.expires_at + 1,
-                       d.revision),
-              Decision("F-1", "approved", "bob", "ok", d.decided_at, d.expires_at, d.revision)]
-    for f in forged:
-        assert not decision_audited(audit(), ENG, f)
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason",
+               "ok") == 0
+    assert cli("reject", "F-1", "--reviewer", "bob", "--reason", "revocada") == 0
+    _copy_approved_row(store)
+    assert store.decisions("F-1")[-1].decision == "approved"         # el registro miente
+    assert audited_decision(store, audit(), ENG, "F-1").decision == "rejected"
+
+
+# --- revisión automática (2): se aprueba la solicitud que se vio -------------------------------
+def test_aprobar_con_hash_distinto(lab, capsys):
+    store, cli, audit = lab
+    assert cli("approve", "F-1", "--request", "0" * 12, "--reviewer", "ana", "--reason",
+               "ok") != 0
+    assert "solicitud" in capsys.readouterr().err
+    assert store.decisions("F-1") == [] and audit() == []
+
+
+def test_aprobar_sin_hash_es_error_de_uso(lab):
+    _, cli, audit = lab
+    with pytest.raises(SystemExit):
+        cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok")
+    assert audit() == []
+
+
+def test_la_cola_cambia_entre_list_y_approve(lab, capsys):
+    store, cli, audit = lab
+    assert cli("list") == 0
+    shown = rh("F-1", store)
+    assert shown in capsys.readouterr().out
+    store.enqueue(QueueItem("F-1", "CWE-693", "dvwa.lab.test", 7.5, "POC-CSP-001",
+                            {"base_url": "http://dvwa.lab.test", "path": "/otro"}, T0 + 1))
+    assert cli("approve", "F-1", "--request", shown, "--reviewer", "ana", "--reason",
+               "ok") != 0
+    assert store.decisions("F-1") == [] and audit() == []
+
+
+def test_hash_de_la_solicitud():
+    a = item()
+    assert len(a.request_hash) == 12 and int(a.request_hash, 16) >= 0
+    b = QueueItem("F-1", "x", "dvwa.lab.test", None, "POC-CSP-001",
+                  {"path": "/", "base_url": "http://dvwa.lab.test"}, 0)
+    assert a.request_hash == b.request_hash                        # parámetros canónicos
+    c = QueueItem("F-1", "x", "dvwa.lab.test", None, "POC-HDR-001", a.params, 0)
+    assert c.request_hash != a.request_hash
+
+
+def test_decision_directa_sin_hash_se_rechaza(tmp_path):
+    store = ApprovalStore.open(ENG, tmp_path)
+    store.enqueue(item())
+    with pytest.raises(ReviewError):
+        store.decide("F-1", "approved", "ana", "ok", T0)
+    assert store.decisions("F-1") == []
 
 
 # --- revisión M5: registro y bitácora no divergen en silencio --------------------------------
@@ -217,7 +285,7 @@ def test_si_la_bitacora_falla_no_se_guarda_la_decision(lab, monkeypatch, capsys)
     def broken(self, *a, **k):
         raise OSError("disco lleno")
     monkeypatch.setattr(SqliteAuditLog, "record_control", broken)
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") != 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason", "ok") != 0
     assert "NO" in capsys.readouterr().err
     monkeypatch.undo()
     assert store.decisions("F-1") == [] and audit() == []
@@ -233,17 +301,19 @@ def test_decision_y_bitacora_en_una_transaccion(tmp_path):
         def record_control(self, *a, **k):
             raise RuntimeError("falla")
     with pytest.raises(RuntimeError):
-        record_decision(store, Boom(), ENG, "F-1", "approved", "ana", "ok", T0)
+        record_decision(store, Boom(), ENG, "F-1", "approved", "ana", "ok", T0,
+                        request=rh("F-1"))
     assert store.decisions("F-1") == []
     audit = AuditLog()
-    d = record_decision(store, audit, ENG, "F-1", "approved", "ana", "ok", T0)
+    d = record_decision(store, audit, ENG, "F-1", "approved", "ana", "ok", T0,
+                        request=rh("F-1"))
     assert store.decisions("F-1") == [d] and len(audit.entries) == 1
 
 
 # --- revisión B1: la aprobación es de UNA versión de la verificación -------------------------
 def test_verificacion_nueva_es_otra_revision_y_pide_otra_decision(lab):
     store, cli, _ = lab
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
+    assert cli("approve", "F-1", "--request", rh("F-1"), "--reviewer", "ana", "--reason", "ok") == 0
     first = store.item("F-1")
     changed = QueueItem("F-1", "CWE-693", "dvwa.lab.test", 7.5, "POC-CSP-001",
                         {"base_url": "http://dvwa.lab.test:8080", "path": "/admin"}, T0 + 90)
@@ -251,7 +321,8 @@ def test_verificacion_nueva_es_otra_revision_y_pide_otra_decision(lab):
     assert store.item("F-1").revision != first.revision
     assert store.item("F-1").params == changed.params
     assert store.current("F-1", T0 + 120) is None and store.status("F-1", T0 + 120) == "pending"
-    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "nueva", now=T0 + 120) == 0
+    assert cli("approve", "F-1", "--request", rh("F-1", store), "--reviewer", "ana",
+               "--reason", "nueva", now=T0 + 120) == 0
     assert store.current("F-1", T0 + 130).revision == store.item("F-1").revision
 
 

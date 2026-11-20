@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS queue (
 CREATE TABLE IF NOT EXISTS decisions (
   finding_id TEXT NOT NULL, decision TEXT NOT NULL CHECK (decision IN ('approved','rejected')),
   reviewer TEXT NOT NULL, reason TEXT NOT NULL, decided_at REAL NOT NULL, expires_at REAL,
-  revision INTEGER NOT NULL);
+  revision INTEGER NOT NULL, request TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS closures (
   finding_id TEXT NOT NULL UNIQUE,
   outcome TEXT NOT NULL CHECK (outcome IN ('validated','not_validated','failed')),
@@ -80,6 +80,17 @@ class QueueItem:
     def same_request(self, host: str, poc_id: str | None, params: dict[str, str]) -> bool:
         return (self.host, self.poc_id, self.params) == (host, poc_id, params)
 
+    @property
+    def request_hash(self) -> str:
+        return request_hash(self.host, self.poc_id, self.params)
+
+
+def request_hash(host: str, poc_id: str | None, params: dict[str, str]) -> str:
+    """Hash corto de lo que se enviaría: lo ve el Reviewer en `list` y lo repite en `approve`."""
+    body = json.dumps({"host": host, "poc_id": poc_id or "", "params": params},
+                      sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(body).hexdigest()[:12]
+
 
 @dataclass(frozen=True)
 class Decision:
@@ -90,6 +101,8 @@ class Decision:
     decided_at: float
     expires_at: float | None
     revision: int
+    request: str                     # hash de la solicitud que se aprobó (o rechazó)
+    seq: int = 0                     # fila del registro: cada control respalda UNA fila
 
 
 @dataclass(frozen=True)
@@ -101,20 +114,35 @@ class Closure:
 
 
 def decision_ref(engagement_id: str, d: Decision) -> str:
-    """Referencia de la decisión para la bitácora: su contenido completo, hasheado."""
+    """Referencia de la decisión para la bitácora: su contenido completo con su número de
+    fila, hasheado. Una copia de la fila tiene otro número y no coincide."""
     body = json.dumps(dataclasses.asdict(d), sort_keys=True).encode("utf-8")
     return f"approvals/{engagement_id}/{d.finding_id}#sha256={hashlib.sha256(body).hexdigest()}"
 
 
-def decision_audited(entries: Iterable[Entry], engagement_id: str, d: Decision) -> bool:
-    """M1: una fila del registro solo vale si la CLI la dejó también en la bitácora."""
-    ref = decision_ref(engagement_id, d)
-    control = CONTROLS[d.decision]
-    return any(e.get("engagement") == engagement_id and e.get("phase") == "control"
-               and e.get("action") == control and e.get("result") == Result.OK.value
-               and e.get("subject") == d.finding_id
-               and e.get("agent") == f"reviewer:{d.reviewer}" and e.get("evidence") == ref
-               for e in entries)
+def _control_backs(e: Entry, engagement_id: str, d: Decision) -> bool:
+    return (e.get("action") == CONTROLS[d.decision]
+            and e.get("agent") == f"reviewer:{d.reviewer}"
+            and e.get("evidence") == decision_ref(engagement_id, d))
+
+
+def audited_decision(store: ApprovalStore, entries: Iterable[Entry], engagement_id: str,
+                     finding_id: str) -> Decision | None:
+    """La decisión vigente según la bitácora, no el registro (M1): el control `hitl.*` más nuevo del hallazgo
+    y la única fila del registro que ese control respalda. El orden de las filas del registro
+    no cuenta: una fila insertada a mano o copiada no tiene su control y no vale."""
+    last: Entry | None = None
+    for e in entries:
+        if e.get("engagement") == engagement_id and e.get("phase") == "control" \
+                and e.get("action") in CONTROLS.values() and e.get("subject") == finding_id \
+                and e.get("result") == Result.OK.value:
+            last = e
+    if last is None:
+        return None
+    for d in store.decisions(finding_id):
+        if _control_backs(last, engagement_id, d):
+            return d
+    return None
 
 
 class ApprovalStore:
@@ -178,8 +206,10 @@ class ApprovalStore:
 
     # -- decisiones --------------------------------------------------------------------
     def decisions(self, finding_id: str) -> list[Decision]:
-        rows = self._con.execute("SELECT * FROM decisions WHERE finding_id = ? ORDER BY rowid",
-                                 (finding_id,)).fetchall()
+        rows = self._con.execute(
+            "SELECT finding_id, decision, reviewer, reason, decided_at, expires_at, revision, "
+            "request, rowid FROM decisions WHERE finding_id = ? ORDER BY rowid",
+            (finding_id,)).fetchall()
         return [Decision(*r) for r in rows]
 
     def current(self, finding_id: str, now: float) -> Decision | None:
@@ -211,7 +241,7 @@ class ApprovalStore:
         return "expired"
 
     def check_decision(self, finding_id: str, decision: str, reviewer: str, reason: str,
-                       now: float) -> QueueItem:
+                       now: float, request: str | None = None) -> QueueItem:
         """Valida una decisión sin escribir. Devuelve la revisión actual del hallazgo."""
         if decision not in DECISIONS:
             raise ReviewError(f"decisión inválida: {decision!r}")
@@ -227,20 +257,25 @@ class ApprovalStore:
             raise ReviewError(f"{finding_id} ya fue rechazado en este engagement")
         if current is not None and decision == "approved":
             raise ReviewError(f"{finding_id} ya tiene una aprobación vigente")
+        if decision == "approved" and request != item.request_hash:
+            raise ReviewError(f"{finding_id}: la solicitud en cola no es la que se revisó "
+                              f"(--request {request}, actual {item.request_hash})")
         return item                               # un rechazo revoca la aprobación (M3)
 
     def decide(self, finding_id: str, decision: str, reviewer: str, reason: str, now: float,
-               on_record: Callable[[Decision, QueueItem], object] | None = None) -> Decision:
+               on_record: Callable[[Decision, QueueItem], object] | None = None,
+               request: str | None = None) -> Decision:
         """Valida y escribe en una transacción (M5). `on_record` corre antes del COMMIT: si
         falla, la fila no queda."""
         self._con.execute("BEGIN IMMEDIATE")      # nadie decide en el medio
         try:
-            item = self.check_decision(finding_id, decision, reviewer, reason, now)
+            item = self.check_decision(finding_id, decision, reviewer, reason, now, request)
             expires = now + self.ttl_s if decision == "approved" else None
             d = Decision(finding_id, decision, reviewer, reason.strip(), now, expires,
-                         item.revision)
-            self._con.execute("INSERT INTO decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                              dataclasses.astuple(d))
+                         item.revision, item.request_hash)
+            cur = self._con.execute("INSERT INTO decisions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                    dataclasses.astuple(d)[:-1])
+            d = dataclasses.replace(d, seq=int(cur.lastrowid or 0))
             if on_record is not None:
                 on_record(d, item)
             self._con.execute("COMMIT")
@@ -264,7 +299,7 @@ class ApprovalStore:
 
 def record_decision(store: ApprovalStore, audit: AuditSink, engagement_id: str,
                     finding_id: str, decision: str, reviewer: str, reason: str,
-                    now: float) -> Decision:
+                    now: float, request: str | None = None) -> Decision:
     """Decisión del Reviewer: fila del registro y control en la bitácora, juntos o ninguno.
 
     Orden (M5): la fila se inserta dentro de una transacción, después se escribe la bitácora y
@@ -276,4 +311,4 @@ def record_decision(store: ApprovalStore, audit: AuditSink, engagement_id: str,
         audit.record_control(engagement_id, f"reviewer:{reviewer}", CONTROLS[decision],
                              item.host, Result.OK, evidence=decision_ref(engagement_id, d),
                              subject=finding_id)
-    return store.decide(finding_id, decision, reviewer, reason, now, write)
+    return store.decide(finding_id, decision, reviewer, reason, now, write, request)

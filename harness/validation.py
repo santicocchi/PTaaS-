@@ -29,7 +29,7 @@ from harness.approvals import (
     ApprovalStore,
     Decision,
     QueueItem,
-    decision_audited,
+    audited_decision,
     load_review_limits,
 )
 from harness.contracts import (
@@ -147,8 +147,7 @@ class ValidationLoop:
             return self._close(fid, c.host, "no_catalog_entry")
         item = self.approvals.item(fid)
         assert item is not None
-        current = self.approvals.current(fid, now)
-        if current is not None and current.decision == "rejected":
+        if self._rejected(fid):
             return self._close(fid, c.host, "reviewer_rejected", poc_id)
         if self._approval(item) is None:
             decided = [d for d in self.approvals.decisions(fid) if d.revision == item.revision]
@@ -161,14 +160,30 @@ class ValidationLoop:
             return FindingOutcome(fid, "pending_hitl", "falta aprobación del Reviewer", poc_id)
         return self._validate(item)
 
+    def _rejected(self, fid: str) -> bool:
+        """Rechazado según la bitácora o según el registro: ante la duda, no se envía."""
+        d = audited_decision(self.approvals, self._entries(), self.token.engagement_id, fid)
+        current = self.approvals.current(fid, self.clock())
+        return (d is not None and d.decision == "rejected") or (
+            current is not None and current.decision == "rejected")
+
     def _approval(self, item: QueueItem) -> Decision | None:
-        """La aprobación que habilita ESTA solicitud, ahora: vigente, de esta revisión y con su
-        control `hitl.approve` en la bitácora (revisión B1, M1, M4)."""
+        """La aprobación que habilita ESTA solicitud, ahora. La decisión vigente sale de la
+        bitácora (el control `hitl.*` más nuevo del hallazgo): tiene que ser una aprobación de
+        esta revisión, sin vencer y con el hash de la solicitud que se va a enviar
+        (revisión B1, M1, M4 y automática 1-2)."""
         latest = self.approvals.item(item.finding_id)
-        d = self.approvals.current(item.finding_id, self.clock())
-        if latest is None or latest.revision != item.revision or d is None                 or d.decision != "approved" or d.revision != item.revision:
+        if latest is None or latest.revision != item.revision:
             return None
-        return d if decision_audited(self._entries(), self.token.engagement_id, d) else None
+        d = audited_decision(self.approvals, self._entries(), self.token.engagement_id,
+                             item.finding_id)
+        if d is None or d.decision != "approved" or d.revision != item.revision:
+            return None
+        if d.request != item.request_hash:
+            return None
+        if d.expires_at is None or self.clock() >= d.expires_at:
+            return None
+        return d
 
     def _validate(self, item: QueueItem) -> FindingOutcome:
         # Se envía exactamente lo que se aprobó: host, entrada y parámetros de la revisión.
@@ -180,8 +195,7 @@ class ValidationLoop:
         errors_only, validated = True, False
         while decide_validation(done, validated, self.max_attempts).decision == "continue":
             if self._approval(item) is None:       # venció o la revocaron entre intentos
-                current = self.approvals.current(fid, self.clock())
-                if current is not None and current.decision == "rejected":
+                if self._rejected(fid):
                     closed = self._close(fid, host, "reviewer_rejected", poc_id)
                     closed.attempts = outcome.attempts
                     closed.evidence_refs = outcome.evidence_refs

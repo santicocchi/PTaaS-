@@ -83,7 +83,8 @@ class Lab:
     def approve(self, fid, at=T0 + 30):
         """Aprobación por el mismo camino que la CLI: registro + bitácora."""
         self.enqueue(fid)
-        record_decision(self.approvals, self.audit, ENG, fid, "approved", "ana", "ok", at)
+        record_decision(self.approvals, self.audit, ENG, fid, "approved", "ana", "ok", at,
+                        request=self.approvals.item(fid).request_hash)
 
     def traffic(self):
         """Registros que no son decisiones del Reviewer."""
@@ -439,7 +440,8 @@ def test_parametros_cambiados_despues_de_aprobar(tmp_path):
     assert res.outcomes[fid].status == "pending_hitl"
     assert lab.docker.runs() == []
     assert lab.approvals.status(fid, lab.now) == "pending"      # pide una decisión nueva
-    record_decision(lab.approvals, lab.audit, ENG, fid, "approved", "ana", "nueva", lab.now)
+    record_decision(lab.approvals, lab.audit, ENG, fid, "approved", "ana", "nueva", lab.now,
+                    request=lab.approvals.item(fid).request_hash)
     lab.run()
     (req,) = lab.docker.stdin
     assert req["path"] == "/admin"                                # la que se aprobó
@@ -461,7 +463,8 @@ def test_aprobacion_insertada_sin_la_cli(tmp_path):
     lab = Lab(tmp_path)
     fid = lab.finding("F-1")
     lab.enqueue(fid)
-    lab.approvals.decide(fid, "approved", "ana", "ok", T0 + 30)    # sin bitácora
+    lab.approvals.decide(fid, "approved", "ana", "ok", T0 + 30,
+                         request=lab.approvals.item(fid).request_hash)   # sin bitácora
     res = lab.run()
     assert res.outcomes[fid].status == "pending_hitl" and lab.docker.runs() == []
 
@@ -471,7 +474,8 @@ def test_control_de_otro_hallazgo_no_habilita(tmp_path):
     f1, f2 = lab.finding("F-1"), lab.finding("F-2", cwe="CWE-1021")
     lab.approve(f1)
     lab.enqueue(f2)
-    lab.approvals.decide(f2, "approved", "ana", "ok", T0 + 30)     # F-2 sin control propio
+    lab.approvals.decide(f2, "approved", "ana", "ok", T0 + 30,
+                         request=lab.approvals.item(f2).request_hash)    # sin control
     lab.run()
     assert len(lab.docker.runs()) == 1
 
@@ -518,3 +522,40 @@ def test_revocada_entre_intentos(tmp_path):
     res = lab.run()
     assert len(lab.docker.runs()) == 1
     assert res.outcomes[fid].reason == "reviewer_rejected"
+
+
+# --- revisión automática (1): la bitácora manda; una copia de la fila no revive nada ---------
+def _insert_decision(lab, fid, request, decision="approved"):
+    import sqlite3
+    item = lab.approvals.item(fid)
+    con = sqlite3.connect(lab.approvals.path)
+    con.execute("INSERT INTO decisions (finding_id, decision, reviewer, reason, decided_at, "
+                "expires_at, revision, request) VALUES (?, ?, 'ana', 'ok', ?, ?, ?, ?)",
+                (fid, decision, T0 + 30, T0 + 3600, item.revision, request))
+    con.commit()
+    con.close()
+
+
+def test_aprobacion_revocada_y_fila_copiada(tmp_path):
+    lab = Lab(tmp_path)
+    fid = lab.finding("F-1")
+    lab.approve(fid)
+    record_decision(lab.approvals, lab.audit, ENG, fid, "rejected", "bob", "revocada", T0 + 40)
+    _insert_decision(lab, fid, lab.approvals.item(fid).request_hash)   # copia de la aprobada
+    assert lab.approvals.decisions(fid)[-1].decision == "approved"
+    res = lab.run()
+    assert lab.docker.runs() == [] and res.outcomes[fid].reason == "reviewer_rejected"
+
+
+# --- revisión automática (2): solo se envía si el hash aprobado es el de lo que se envía -----
+def test_aprobacion_con_hash_de_otra_solicitud_no_envia(tmp_path):
+    from harness.approvals import decision_ref
+    lab = Lab(tmp_path)
+    fid = lab.finding("F-1")
+    lab.enqueue(fid)
+    _insert_decision(lab, fid, "f" * 12)          # fila a mano con otro hash...
+    (d,) = lab.approvals.decisions(fid)
+    lab.audit.record_control(ENG, "reviewer:ana", "hitl.approve", "dvwa.lab.test", Result.OK,
+                             evidence=decision_ref(ENG, d), subject=fid)   # ...y "auditada"
+    res = lab.run()
+    assert res.outcomes[fid].status == "pending_hitl" and lab.docker.runs() == []
