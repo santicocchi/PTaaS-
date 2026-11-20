@@ -32,8 +32,8 @@ entries:
       en modo de solo reporte, ajustar las fuentes permitidas y después aplicarla.
     references: [WSTG-CONF-12]
     cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:A/VC:N/VI:L/VA:N/SC:L/SI:L/SA:N"
-    author: claude
-    reviewer: pendiente
+    author: santiago
+    reviewer: santiago
     date: "2026-11-20"
   CWE-1021:
     title: La página se puede mostrar dentro de otro sitio (clickjacking)
@@ -48,8 +48,8 @@ entries:
       en DENY para navegadores viejos.
     references: [WSTG-CLNT-09]
     cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N"
-    author: claude
-    reviewer: pendiente
+    author: santiago
+    reviewer: santiago
     date: "2026-11-20"
   CWE-497:
     title: El servidor publica su versión
@@ -64,8 +64,8 @@ entries:
       Mantener el software actualizado.
     references: [WSTG-INFO-02]
     cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"
-    author: claude
-    reviewer: pendiente
+    author: santiago
+    reviewer: santiago
     date: "2026-11-20"
   CWE-1004:
     title: Cookie de sesión accesible desde scripts
@@ -79,8 +79,8 @@ entries:
       Marcar la cookie de sesión con el atributo HttpOnly. Revisar también Secure y SameSite.
     references: [WSTG-SESS-02]
     cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:A/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"
-    author: claude
-    reviewer: pendiente
+    author: santiago
+    reviewer: santiago
     date: "2026-11-20"
   CWE-1275:
     title: Cookie de sesión sin restricción entre sitios
@@ -95,8 +95,8 @@ entries:
       solicitudes falsificadas en los formularios.
     references: [WSTG-SESS-02]
     cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:A/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N"
-    author: claude
-    reviewer: pendiente
+    author: santiago
+    reviewer: santiago
     date: "2026-11-20"
   CWE-614:
     title: Cookie de sesión que puede viajar sin cifrar
@@ -109,8 +109,8 @@ entries:
       Marcar la cookie de sesión con el atributo Secure y servir la aplicación solo por HTTPS.
     references: [WSTG-SESS-02]
     cvss_v4_vector: "CVSS:4.0/AV:A/AC:H/AT:P/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"
-    author: claude
-    reviewer: pendiente
+    author: santiago
+    reviewer: santiago
     date: "2026-11-20"
   CWE-548:
     title: Listado de directorios habilitado
@@ -125,8 +125,8 @@ entries:
       que no hacen falta.
     references: [WSTG-CONF-04]
     cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"
-    author: claude
-    reviewer: pendiente
+    author: santiago
+    reviewer: santiago
     date: "2026-11-20"
   CWE-79:
     title: Datos del usuario que se devuelven sin codificar
@@ -141,8 +141,8 @@ entries:
       política de seguridad de contenido como defensa adicional.
     references: [WSTG-INPV-01]
     cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:A/VC:N/VI:N/VA:N/SC:L/SI:L/SA:N"
-    author: claude
-    reviewer: pendiente
+    author: santiago
+    reviewer: santiago
     date: "2026-11-20"
   CWE-209:
     title: Mensajes de error con detalles internos
@@ -156,6 +156,6 @@ entries:
       Mostrar mensajes de error genéricos y registrar el detalle solo del lado del servidor.
     references: [WSTG-ERRH-01]
     cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"
-    author: claude
-    reviewer: pendiente
+    author: santiago
+    reviewer: santiago
     date: "2026-11-20"
