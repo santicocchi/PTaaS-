@@ -254,3 +254,35 @@ def test_informe_alterado_despues_de_aprobar(validated, catalog, capsys):
     aborted = [(e["result"], e.get("reason")) for e in controls(state, eng, "report.delivery")]
     assert aborted[-1] == ("ABORTED", "evidence_mismatch")
     assert controls(state, eng, "report.delivered") == []
+
+
+# ---- los CVE sintéticos vienen del feed, no del modo (corrida en el lab del 20/11) -----------
+
+@pytest.mark.parametrize("manifest,expected", [
+    ('{"synthetic": true, "files": {}}', True),
+    ('{"synthetic": false, "files": {}}', False),
+    ('{"files": {}}', False),
+    ('{"synthetic": "true"}', False),
+    ("no es json", False),
+])
+def test_tabla_sintetica_segun_el_feed(tmp_path, manifest, expected):
+    (tmp_path / "manifest.json").write_text(manifest, encoding="utf-8")
+    assert report.feeds_are_synthetic(tmp_path) is expected
+
+
+def test_sin_manifiesto_no_hay_tabla_sintetica(tmp_path):
+    assert report.feeds_are_synthetic(tmp_path) is False
+
+
+def test_el_feed_del_repo_es_sintetico_hoy():
+    """Si se sube el feed real, este test avisa que la tabla sintética deja de leerse."""
+    assert report.feeds_are_synthetic() is True
+
+
+def test_con_feed_real_no_se_suman_los_cve_sinteticos(validated, catalog, capsys, monkeypatch):
+    state, eng = validated
+    monkeypatch.setattr(report, "feeds_are_synthetic", lambda: False)
+    assert demo(state, eng, catalog) == 1
+    out = capsys.readouterr().out
+    assert "no se generó" in out and "report_catalog_sim" not in out
+    assert controls(state, eng, "report.generated") == []

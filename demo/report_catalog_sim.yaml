@@ -1,8 +1,8 @@
-# Entradas de la tabla curada SOLO para la simulación (change 007). Cubren los CVE sintéticos
-# de data/feeds/nvd.json (CVE-2099-…), que no existen. demo/report.py las suma a
-# data/report_catalog.yaml solo si la entrega importada es de modo simulación; con --lab no
-# se leen. Cuando el equipo genere el feed real, los CVE reales necesitan sus propias entradas
-# en data/report_catalog.yaml.
+# Entradas de la tabla curada SOLO para el feed sintético (change 007). Cubren los CVE
+# sintéticos de data/feeds/nvd.json (CVE-2099-…), que no existen. demo/report.py las suma a
+# data/report_catalog.yaml mientras data/feeds/manifest.json diga `synthetic: true`, en
+# simulación y con --lab. Cuando el equipo genere el feed real ya no se leen, y los CVE reales
+# necesitan sus propias entradas en data/report_catalog.yaml.
 #
 # Mismas reglas que la tabla del repo: cada entrada la revisa alguien distinto del autor.
 catalog_version: "0.1.0-sim"
