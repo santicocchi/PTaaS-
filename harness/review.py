@@ -6,7 +6,8 @@
 
 Cada decisión queda en el registro de aprobaciones y en la bitácora (`hitl.approve` /
 `hitl.reject`, objetivo = host del hallazgo). Primero se valida todo; si algo falla, no se
-escribe nada. Después se escribe la bitácora y recién entonces el registro.
+escribe nada. La fila del registro y el control de la bitácora se escriben en una sola
+transacción del registro (ver `record_decision`): si la bitácora falla, no queda la fila.
 """
 from __future__ import annotations
 
@@ -14,11 +15,10 @@ import argparse
 import sys
 import time
 
-from harness.approvals import ApprovalStore, ReviewError
+from harness.approvals import ApprovalStore, ReviewError, record_decision
 from harness.audit import SqliteAuditLog
-from harness.contracts import Result
 
-ACTIONS = {"approve": ("approved", "hitl.approve"), "reject": ("rejected", "hitl.reject")}
+ACTIONS = {"approve": "approved", "reject": "rejected"}
 
 
 def now() -> float:
@@ -60,19 +60,25 @@ def main(argv: list[str]) -> int:
     at = now()
     if args.command == "list":
         return _list(store, at)
-    decision, control = ACTIONS[args.command]
+    decision = ACTIONS[args.command]
     try:
-        item = store.check_decision(args.finding_id, decision, args.reviewer, args.reason, at)
+        store.check_decision(args.finding_id, decision, args.reviewer, args.reason, at)
     except ReviewError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     audit = SqliteAuditLog.open(args.engagement, args.audit_dir)
     try:
-        audit.record_control(args.engagement, f"reviewer:{args.reviewer}", control, item.host,
-                             Result.OK)
+        record_decision(store, audit, args.engagement, args.finding_id, decision,
+                        args.reviewer, args.reason, at)
+    except ReviewError as exc:              # cambió entre la validación y la transacción
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001 - se informa fuerte: registro y bitácora
+        print(f"ERROR: la decisión NO quedó registrada ({type(exc).__name__}: {exc}). "
+              "Revisá la bitácora antes de reintentar.", file=sys.stderr)
+        return 3
     finally:
         audit.close()
-    store.decide(args.finding_id, decision, args.reviewer, args.reason, at)
     print(f"{args.finding_id}: {decision} por {args.reviewer}")
     return 0
 

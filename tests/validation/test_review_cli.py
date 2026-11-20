@@ -103,12 +103,22 @@ def test_aprobacion_registrada_con_vencimiento(lab):
     assert store.status("F-2", T0 + 120) == "pending"        # el otro hallazgo no se aprueba
 
 
-def test_decision_vigente_no_se_pisa(lab):
+def test_aprobacion_vigente_no_se_vuelve_a_aprobar(lab):
     store, cli, audit = lab
     assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
-    assert cli("reject", "F-1", "--reviewer", "bob", "--reason", "no") != 0
     assert cli("approve", "F-1", "--reviewer", "bob", "--reason", "otra vez") != 0
     assert len(store.decisions("F-1")) == 1 and len(audit()) == 1
+
+
+def test_rechazo_revoca_una_aprobacion_vigente(lab):
+    """Revisión M3: la última fila manda; un reject sobre una aprobación vigente la revoca."""
+    store, cli, audit = lab
+    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
+    assert cli("reject", "F-1", "--reviewer", "bob", "--reason", "revocada") == 0
+    assert store.status("F-1", T0 + 120) == "rejected"
+    assert store.current("F-1", T0 + 120).decision == "rejected"
+    assert [e["action"] for e in audit()] == ["hitl.approve", "hitl.reject"]
+    assert cli("reject", "F-1", "--reviewer", "bob", "--reason", "otra vez") != 0
 
 
 def test_rechazo_no_se_vuelve_a_pedir(lab):
@@ -173,3 +183,83 @@ def test_decision_directa_valida_igual(tmp_path):
 def test_engagement_invalido(tmp_path):
     with pytest.raises(ValueError):
         ApprovalStore.open("../x", tmp_path)
+
+
+# --- revisión M1/M2: la decisión queda atada al hallazgo en la bitácora ----------------------
+def test_control_con_subject_y_referencia_a_la_decision(lab):
+    from harness.approvals import decision_audited, decision_ref
+    store, cli, audit = lab
+    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
+    (d,) = store.decisions("F-1")
+    (e,) = audit()
+    assert e["subject"] == "F-1" and e["agent"] == "reviewer:ana"
+    assert e["evidence"] == decision_ref(ENG, d)
+    assert decision_audited(audit(), ENG, d)
+
+
+def test_fila_insertada_sin_la_cli_no_esta_auditada(lab):
+    from harness.approvals import Decision, decision_audited
+    store, cli, audit = lab
+    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
+    (d,) = store.decisions("F-1")
+    forged = [Decision("F-2", "approved", "ana", "ok", d.decided_at, d.expires_at, 2),
+              Decision("F-1", "approved", "ana", "ok", d.decided_at, d.expires_at + 1,
+                       d.revision),
+              Decision("F-1", "approved", "bob", "ok", d.decided_at, d.expires_at, d.revision)]
+    for f in forged:
+        assert not decision_audited(audit(), ENG, f)
+
+
+# --- revisión M5: registro y bitácora no divergen en silencio --------------------------------
+def test_si_la_bitacora_falla_no_se_guarda_la_decision(lab, monkeypatch, capsys):
+    store, cli, audit = lab
+
+    def broken(self, *a, **k):
+        raise OSError("disco lleno")
+    monkeypatch.setattr(SqliteAuditLog, "record_control", broken)
+    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") != 0
+    assert "NO" in capsys.readouterr().err
+    monkeypatch.undo()
+    assert store.decisions("F-1") == [] and audit() == []
+
+
+def test_decision_y_bitacora_en_una_transaccion(tmp_path):
+    from harness.approvals import record_decision
+    from harness.contracts import AuditLog
+    store = ApprovalStore.open(ENG, tmp_path)
+    store.enqueue(item())
+
+    class Boom(AuditLog):
+        def record_control(self, *a, **k):
+            raise RuntimeError("falla")
+    with pytest.raises(RuntimeError):
+        record_decision(store, Boom(), ENG, "F-1", "approved", "ana", "ok", T0)
+    assert store.decisions("F-1") == []
+    audit = AuditLog()
+    d = record_decision(store, audit, ENG, "F-1", "approved", "ana", "ok", T0)
+    assert store.decisions("F-1") == [d] and len(audit.entries) == 1
+
+
+# --- revisión B1: la aprobación es de UNA versión de la verificación -------------------------
+def test_verificacion_nueva_es_otra_revision_y_pide_otra_decision(lab):
+    store, cli, _ = lab
+    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "ok") == 0
+    first = store.item("F-1")
+    changed = QueueItem("F-1", "CWE-693", "dvwa.lab.test", 7.5, "POC-CSP-001",
+                        {"base_url": "http://dvwa.lab.test:8080", "path": "/admin"}, T0 + 90)
+    assert store.enqueue(changed) is True
+    assert store.item("F-1").revision != first.revision
+    assert store.item("F-1").params == changed.params
+    assert store.current("F-1", T0 + 120) is None and store.status("F-1", T0 + 120) == "pending"
+    assert cli("approve", "F-1", "--reviewer", "ana", "--reason", "nueva", now=T0 + 120) == 0
+    assert store.current("F-1", T0 + 130).revision == store.item("F-1").revision
+
+
+def test_volver_a_una_solicitud_anterior_es_otra_revision(tmp_path):
+    store = ApprovalStore.open(ENG, tmp_path)
+    a, b = item(), QueueItem("F-1", "CWE-693", "dvwa.lab.test", 7.5, "POC-CSP-001",
+                             {"base_url": "http://dvwa.lab.test", "path": "/b"}, T0)
+    assert store.enqueue(a) and store.enqueue(b)
+    rev_a = store.item("F-1").revision
+    assert store.enqueue(a) is True and store.item("F-1").revision > rev_a
+    assert store.enqueue(a) is False

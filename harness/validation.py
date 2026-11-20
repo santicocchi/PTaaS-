@@ -25,7 +25,13 @@ from urllib.parse import parse_qsl, urlsplit
 
 from harness.adapters.poc_catalog_adapter import PocCatalogRun, PocRequest
 from harness.analysis import FindingStore
-from harness.approvals import ApprovalStore, QueueItem, load_review_limits
+from harness.approvals import (
+    ApprovalStore,
+    Decision,
+    QueueItem,
+    decision_audited,
+    load_review_limits,
+)
 from harness.contracts import (
     Action,
     AuditIntegrityError,
@@ -141,25 +147,48 @@ class ValidationLoop:
             return self._close(fid, c.host, "no_catalog_entry")
         item = self.approvals.item(fid)
         assert item is not None
-        decisions = self.approvals.decisions(fid)
         current = self.approvals.current(fid, now)
-        if decisions and decisions[-1].decision == "rejected":
+        if current is not None and current.decision == "rejected":
             return self._close(fid, c.host, "reviewer_rejected", poc_id)
-        if current is None:
-            if not decisions and now - item.enqueued_at > self.timeout_s:
+        if self._approval(item) is None:
+            decided = [d for d in self.approvals.decisions(fid) if d.revision == item.revision]
+            if not decided and now - item.enqueued_at > self.timeout_s:
                 return self._close(fid, c.host, "reviewer_timeout", poc_id)
-            # Sin aprobación vigente se invoca igual: el Harness registra PENDING_HITL y el
-            # adaptador no corre (la aprobación no está cargada en el Guard).
-            self._invoke(fid, c.host, None)
+            # Sin aprobación vigente (o para otra versión de la solicitud, o sin su control en
+            # la bitácora) se invoca igual: el Harness registra PENDING_HITL y el adaptador no
+            # corre, porque la aprobación no está cargada en el Guard.
+            self._invoke(fid, item.host, None)
             return FindingOutcome(fid, "pending_hitl", "falta aprobación del Reviewer", poc_id)
-        return self._validate(fid, c.host, poc_id, params)
+        return self._validate(item)
 
-    def _validate(self, fid: str, host: str, poc_id: str,
-                  params: dict[str, str]) -> FindingOutcome:
+    def _approval(self, item: QueueItem) -> Decision | None:
+        """La aprobación que habilita ESTA solicitud, ahora: vigente, de esta revisión y con su
+        control `hitl.approve` en la bitácora (revisión B1, M1, M4)."""
+        latest = self.approvals.item(item.finding_id)
+        d = self.approvals.current(item.finding_id, self.clock())
+        if latest is None or latest.revision != item.revision or d is None                 or d.decision != "approved" or d.revision != item.revision:
+            return None
+        return d if decision_audited(self._entries(), self.token.engagement_id, d) else None
+
+    def _validate(self, item: QueueItem) -> FindingOutcome:
+        # Se envía exactamente lo que se aprobó: host, entrada y parámetros de la revisión.
+        fid, host, params = item.finding_id, item.host, item.params
+        assert item.poc_id is not None
+        poc_id = item.poc_id
         outcome = FindingOutcome(fid, "not_validated", None, poc_id)
         done = self._prior_attempts(fid)
         errors_only, validated = True, False
         while decide_validation(done, validated, self.max_attempts).decision == "continue":
+            if self._approval(item) is None:       # venció o la revocaron entre intentos
+                current = self.approvals.current(fid, self.clock())
+                if current is not None and current.decision == "rejected":
+                    closed = self._close(fid, host, "reviewer_rejected", poc_id)
+                    closed.attempts = outcome.attempts
+                    closed.evidence_refs = outcome.evidence_refs
+                    closed.sandbox_ids = outcome.sandbox_ids
+                    return closed
+                outcome.status, outcome.reason = "pending_hitl", "falta aprobación del Reviewer"
+                return outcome
             if self._engagement_requests() >= self.limits.max_requests_per_engagement:
                 closed = self._close(fid, host, "request_budget_exhausted", poc_id)
                 closed.attempts = outcome.attempts
@@ -258,8 +287,10 @@ class ValidationLoop:
 
     def _control(self, action: str, target: str, result: Result, reason: str | None,
                  evidence: str | None = None) -> None:
+        # Los controles de un hallazgo llevan su finding_id como subject (revisión M2).
+        subject = target if action in (ATTEMPT_ACTION, CLOSED_ACTION) else None
         self.harness.audit.record_control(self.token.engagement_id, AGENT, action, target,
-                                          result, reason, evidence)
+                                          result, reason, evidence, subject)
 
     def _entries(self) -> list[dict[str, Any]]:
         return [e for e in self.harness.audit.entries

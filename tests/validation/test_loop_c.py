@@ -10,7 +10,7 @@ from urllib.parse import unquote
 import pytest
 
 from harness.analysis import FindingStore, Observation
-from harness.approvals import ApprovalStore, QueueItem
+from harness.approvals import ApprovalStore, QueueItem, record_decision
 from harness.contracts import AuditLog, Guard, Harness, KillSwitch, Phase, Result
 from harness.engagement import State
 from harness.evidence import verify_evidence
@@ -76,11 +76,18 @@ class Lab:
     def enqueue(self, fid, at=T0):
         """El hallazgo ya estaba en cola (lo puso una corrida anterior del loop)."""
         c = next(c for c in self.candidates if c.id == fid)
-        self.approvals.enqueue(QueueItem(fid, c.cwe, c.host, 5.0, None, {}, at))
+        choice = self.loop._choose(c)
+        poc_id, params = choice if choice else (None, {})
+        self.approvals.enqueue(QueueItem(fid, c.cwe, c.host, 5.0, poc_id, params, at))
 
     def approve(self, fid, at=T0 + 30):
+        """Aprobación por el mismo camino que la CLI: registro + bitácora."""
         self.enqueue(fid)
-        self.approvals.decide(fid, "approved", "ana", "ok", at)
+        record_decision(self.approvals, self.audit, ENG, fid, "approved", "ana", "ok", at)
+
+    def traffic(self):
+        """Registros que no son decisiones del Reviewer."""
+        return [e for e in self.audit.entries if not e["action"].startswith("hitl.")]
 
     def run(self):
         return self.loop.run(self.vulns, self.candidates)
@@ -179,7 +186,7 @@ def test_hallazgo_descartado(tmp_path):
     lab.approve(fid)
     res = lab.run()
     assert res.outcomes[fid].status == "skipped"
-    assert lab.docker.runs() == [] and lab.audit.entries == []
+    assert lab.docker.runs() == [] and lab.traffic() == []
 
 
 def test_verificacion_inexistente_en_el_catalogo(tmp_path):
@@ -190,7 +197,7 @@ def test_verificacion_inexistente_en_el_catalogo(tmp_path):
     assert (res.outcomes[fid].status, res.outcomes[fid].reason) == ("not_validated",
                                                                     "no_catalog_entry")
     assert lab.docker.runs() == []
-    assert [e["action"] for e in lab.audit.entries] == ["validation.closed"]
+    assert [e["action"] for e in lab.traffic()] == ["validation.closed"]
 
 
 def test_host_fuera_de_lab_targets_no_tiene_entrada(tmp_path):
@@ -242,7 +249,7 @@ def test_engagement_fuera_de_validate(tmp_path):
     lab.approve(fid)
     res = lab.run()
     assert res.reason == "engagement fuera de VALIDATE"
-    assert res.outcomes == {} and lab.docker.runs() == [] and lab.audit.entries == []
+    assert res.outcomes == {} and lab.docker.runs() == [] and lab.traffic() == []
 
 
 def test_kill_switch_activo_no_arranca(tmp_path):
@@ -417,3 +424,97 @@ def test_host_parecido_no_tiene_entrada(tmp_path, host):
     lab.approve(fid)
     res = lab.run()
     assert res.outcomes[fid].reason == "no_catalog_entry" and lab.docker.runs() == []
+
+
+
+# --- revisión B1: se envía exactamente lo que se aprobó -------------------------------------
+def test_parametros_cambiados_despues_de_aprobar(tmp_path):
+    lab = Lab(tmp_path)
+    fid = lab.finding("F-1", url="http://dvwa.lab.test/login.php")
+    lab.approve(fid)
+    # El loop B observa después otro endpoint del mismo CWE: la elección cambia.
+    lab.store.add(Observation("dvwa.lab.test", 2, "zap", "2", "CWE-693",
+                              "http://dvwa.lab.test/admin", "high", "Medium", ""))
+    res = lab.run()
+    assert res.outcomes[fid].status == "pending_hitl"
+    assert lab.docker.runs() == []
+    assert lab.approvals.status(fid, lab.now) == "pending"      # pide una decisión nueva
+    record_decision(lab.approvals, lab.audit, ENG, fid, "approved", "ana", "nueva", lab.now)
+    lab.run()
+    (req,) = lab.docker.stdin
+    assert req["path"] == "/admin"                                # la que se aprobó
+
+
+def test_se_envia_la_solicitud_aprobada(tmp_path):
+    lab = Lab(tmp_path)
+    fid = lab.finding("F-1", url="http://dvwa.lab.test:8080/login.php")
+    lab.approve(fid)
+    lab.run()
+    (req,) = lab.docker.stdin
+    approved = lab.approvals.item(fid)
+    assert approved.params == {"base_url": "http://dvwa.lab.test:8080", "path": "/login.php"}
+    assert (req["port"], req["path"]) == (8080, "/login.php")
+
+
+# --- revisión M1: una fila del registro sin su control en la bitácora no habilita nada --------
+def test_aprobacion_insertada_sin_la_cli(tmp_path):
+    lab = Lab(tmp_path)
+    fid = lab.finding("F-1")
+    lab.enqueue(fid)
+    lab.approvals.decide(fid, "approved", "ana", "ok", T0 + 30)    # sin bitácora
+    res = lab.run()
+    assert res.outcomes[fid].status == "pending_hitl" and lab.docker.runs() == []
+
+
+def test_control_de_otro_hallazgo_no_habilita(tmp_path):
+    lab = Lab(tmp_path)
+    f1, f2 = lab.finding("F-1"), lab.finding("F-2", cwe="CWE-1021")
+    lab.approve(f1)
+    lab.enqueue(f2)
+    lab.approvals.decide(f2, "approved", "ana", "ok", T0 + 30)     # F-2 sin control propio
+    lab.run()
+    assert len(lab.docker.runs()) == 1
+
+
+# --- revisión M3: un rechazo revoca una aprobación vigente ------------------------------------
+def test_aprobacion_revocada_no_envia(tmp_path):
+    lab = Lab(tmp_path)
+    fid = lab.finding("F-1")
+    lab.approve(fid)
+    record_decision(lab.approvals, lab.audit, ENG, fid, "rejected", "bob", "revocada", T0 + 40)
+    res = lab.run()
+    assert res.outcomes[fid].reason == "reviewer_rejected" and lab.docker.runs() == []
+
+
+# --- revisión M4: la aprobación se vuelve a mirar antes de cada intento -----------------------
+def test_aprobacion_que_vence_entre_intentos(tmp_path):
+    holder = {}
+
+    def negative_then_expire(req):
+        holder["lab"].now = T0 + 30 + 61 * 60                     # vence durante el intento 1
+        return escaped(req)
+    lab = Lab(tmp_path, docker=FakeDocker(run=negative_then_expire))
+    holder["lab"] = lab
+    fid = lab.finding("F-1", cwe="CWE-79", url="http://dvwa.lab.test/x?q=1")
+    lab.approve(fid)
+    res = lab.run()
+    assert len(lab.docker.runs()) == 1
+    assert res.outcomes[fid].status == "pending_hitl" and res.outcomes[fid].attempts == 1
+    assert lab.approvals.closure(fid) is None
+
+
+def test_revocada_entre_intentos(tmp_path):
+    holder = {}
+
+    def negative_then_revoke(req):
+        lab = holder["lab"]
+        record_decision(lab.approvals, lab.audit, ENG, "F-1", "rejected", "bob", "basta",
+                        T0 + 50)
+        return escaped(req)
+    lab = Lab(tmp_path, docker=FakeDocker(run=negative_then_revoke))
+    holder["lab"] = lab
+    fid = lab.finding("F-1", cwe="CWE-79", url="http://dvwa.lab.test/x?q=1")
+    lab.approve(fid)
+    res = lab.run()
+    assert len(lab.docker.runs()) == 1
+    assert res.outcomes[fid].reason == "reviewer_rejected"
