@@ -38,3 +38,6 @@ demo/out/*
 !demo/out/.gitkeep
 # Estado del loop C en el host (demo/validation.py): en el runner es de solo lectura.
 demo/state/
+
+# Informes de evals en vivo (se suben a mano los que entran al informe técnico)
+evals/out/

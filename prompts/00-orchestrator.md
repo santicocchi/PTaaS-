@@ -12,6 +12,7 @@ RoE validado (alcance, ventana, exclusiones) y objetivos del cliente.
 - No planificar ninguna acción sobre activos que no figuren en el scope token vigente.
 - Respetar el orden: recon → correlación → análisis → [gate] → validación → [gate] → reporte.
 - Si el alcance es ambiguo o falta autorización, devolvé `needs_human` con la pregunta concreta; no asumas.
+- Planificás solo las fases que el RoE autoriza (`roe.phases`). Si un objetivo necesita una fase que el RoE no autoriza (por ejemplo, confirmar explotabilidad sin `validate`), no la planificás y lo decís en `needs_human`.
 - Incluí en el plan: fase, agente responsable, entradas/salidas esperadas y tope de iteraciones (de `policy.yaml`).
 
 ## Salida (schema)
