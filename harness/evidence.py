@@ -15,6 +15,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from harness.contracts import EVIDENCE_RE, SUBJECT_RE
 from harness.poc.catalog import ResponseRecord, match_span
@@ -56,6 +57,9 @@ def response_summary(record: ResponseRecord, evaluator: str) -> dict[str, Any]:
         low = name.lower()
         if low in REDACTED_HEADERS:
             headers[name] = REDACTED
+        elif low == "location":                     # sin query ni fragmento (tokens)
+            parts = urlsplit(value)
+            headers[name] = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
         elif low in ALLOWED_HEADERS:
             headers[name] = value
     return {

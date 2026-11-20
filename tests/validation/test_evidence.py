@@ -120,3 +120,16 @@ def test_referencia_invalida_o_inexistente(tmp_path, ref):
 def test_nombres_invalidos(tmp_path, eng, finding):
     with pytest.raises(ValueError):
         write_evidence(tmp_path, eng, finding, 1, {})
+
+
+# --- revisión M9: Location sin query ni fragmento ---------------------------------------------
+@pytest.mark.parametrize("location,expected", [
+    ("http://dvwa.lab.test/login.php?token=s3cret#frag", "http://dvwa.lab.test/login.php"),
+    ("/index.php?PHPSESSID=s3cret", "/index.php"),
+    ("login.php#s3cret", "login.php"),
+    ("http://dvwa.lab.test/", "http://dvwa.lab.test/"),
+])
+def test_location_sin_query_ni_fragmento(location, expected):
+    d = doc(ResponseRecord(302, {"Location": location}, ""))
+    assert d["response"]["headers"]["Location"] == expected
+    assert "s3cret" not in json.dumps(d)
