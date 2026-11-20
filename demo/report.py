@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import re
 import sys
 import time
@@ -68,6 +69,7 @@ from harness.delivery import (
     latest_report,
 )
 from harness.engagement import Engagement
+from harness.feeds import FEEDS_DIR, MANIFEST_FILE
 from harness.policy_loader import phase_allowlist
 from harness.report_catalog import REPORT_CATALOG, ReportCatalog
 from harness.reporting import (
@@ -139,6 +141,17 @@ def asset_graph(state: Path, eng: str, roe: RoE, web_hosts: list[str],
     return graph, skipped
 
 
+def feeds_are_synthetic(base: Path = FEEDS_DIR) -> bool:
+    """Los CVE-2099-… salen del snapshot sintético de data/feeds/, en simulación y también con
+    --lab. Su tabla se suma solo mientras el manifiesto del feed (en el repo, que el runner no
+    puede escribir) diga `synthetic: true`. Con el feed real no se lee."""
+    try:
+        manifest = json.loads((base / MANIFEST_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(manifest, dict) and manifest.get("synthetic") is True
+
+
 def load_catalog(paths: list[Path], synthetic: Path | None = None) -> ReportCatalog:
     """La tabla del repo y, en simulación, la de los CVE sintéticos, que solo puede traer
     claves `CVE-2099-…` y no pisa ninguna. Con un solo archivo el SHA-256 es el del archivo."""
@@ -178,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--catalog", type=Path, default=REPORT_CATALOG,
                         help="tabla curada del informe (default data/report_catalog.yaml)")
     parser.add_argument("--sim-catalog", type=Path, default=SIM_CATALOG,
-                        help="entradas de los CVE sintéticos; solo en simulación "
+                        help="entradas de los CVE sintéticos; solo con el feed sintético "
                              "(default demo/report_catalog_sim.yaml)")
     parser.add_argument("--new-version", action="store_true",
                         help="generar la versión siguiente aunque ya haya una")
@@ -237,10 +250,10 @@ def _run(args: argparse.Namespace, eng: str, state: Path, audit: SqliteAuditLog)
 
         # 1. Generar la versión, una sola vez salvo --new-version.
         if _generated(audit, eng) == 0 or args.new_version:
-            sim = data.get("mode") == "sim"
-            paths = [args.catalog, *([args.sim_catalog] if sim else [])]
+            synthetic = feeds_are_synthetic()
+            paths = [args.catalog, *([args.sim_catalog] if synthetic else [])]
             try:
-                catalog = load_catalog([args.catalog], args.sim_catalog if sim else None)
+                catalog = load_catalog([args.catalog], args.sim_catalog if synthetic else None)
             except (OSError, ValueError) as exc:
                 return _err(f"No se puede leer la tabla curada: {exc}")
             observed = [str(o.get("url", "")) for o in data.get("observations") or []

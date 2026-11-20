@@ -229,10 +229,10 @@ python -m demo.report --engagement <engagement>
 
 **Antes de la primera corrida:** el informe usa la tabla curada `data/report_catalog.yaml`.
 Cada entrada necesita un `reviewer` distinto del autor. Mientras diga `pendiente`, la demo
-falla y lista qué hallazgo y qué campo faltan, sin escribir ningún informe. En simulación
-además se suman las entradas de los CVE sintéticos (`demo/report_catalog_sim.yaml`), que
-también se revisan y solo pueden traer CVE `CVE-2099-…`. Con una entrega de laboratorio esa tabla no se
-lee, y si la bitácora del loop C no corresponde al modo de la entrega (una imagen simulada en
+falla y lista qué hallazgo y qué campo faltan, sin escribir ningún informe. Mientras el feed
+de `data/feeds/` sea el sintético (también con `--lab`), además se suman las entradas de los
+CVE sintéticos (`demo/report_catalog_sim.yaml`), que también se revisan y solo pueden traer
+CVE `CVE-2099-…`. Con el feed real esa tabla no se lee. Si la bitácora del loop C no corresponde al modo de la entrega (una imagen simulada en
 un recorrido de laboratorio, o al revés) la demo no genera nada.
 
 Qué mirar en cada paso:
