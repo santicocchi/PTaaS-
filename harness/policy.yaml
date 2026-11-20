@@ -22,6 +22,8 @@ phases:
 gates_hitl:
   - before: validate        # aprobación por hallazgo
     approver_role: reviewer
+    validation_timeout_minutes: 60   # 006, D5: sin decisión → not_validated (reviewer_timeout)
+    approval_ttl_minutes: 60         # 006, D5: una aprobación vencida vale lo mismo que ninguna
   - before: deliver
     approver_role: reviewer
   - before: first_active_action

@@ -10,7 +10,7 @@
 - [x] 2.2 Sandbox efímero: contenedor en red interna que implementa `Sender` (D3), imagen `lab/sandbox/`
 - [ ] 2.3 Límites de tiempo, tamaño y cantidad de solicitudes (D4)
 - [ ] 2.4 Orquestación del loop C con `decide_validation` (D1, D9)
-- [ ] 2.5 CLI de aprobación: listar hallazgos pendientes, aprobar o rechazar con motivo (D6)
+- [x] 2.5 CLI de aprobación: listar hallazgos pendientes, aprobar o rechazar con motivo (D6)
 - [ ] 2.6 Registrar aprobación, verificación elegida y resultado en bitácora
 - [x] 2.7 Aprobación HITL con `subject` en `Guard` y `Harness.invoke` (D2)
 - [ ] 2.8 `ApprovalStore` append-only, vencimiento y timeout del Reviewer (D5)
