@@ -1,14 +1,24 @@
 # Delta — reporting (change 007)
 
-Tests: tests/reporting/test_required_fields.py, tests/reporting/test_cvss4.py, tests/reporting/test_build_from_audit.py, tests/reporting/test_validation_status.py, tests/reporting/test_structure.py, tests/reporting/test_redaction.py, tests/reporting/test_disclosure.py, tests/reporting/test_duplicates.py, tests/reporting/test_versioning.py, tests/reporting/test_defectdojo_export.py, tests/reporting/test_delivery_gate.py, tests/reporting/test_report_review_cli.py
+Tests: tests/reporting/test_required_fields.py, tests/reporting/test_cvss4.py, tests/reporting/test_build_from_audit.py, tests/reporting/test_validation_status.py, tests/reporting/test_structure.py, tests/reporting/test_redaction.py, tests/reporting/test_disclosure.py, tests/reporting/test_duplicates.py, tests/reporting/test_versioning.py, tests/reporting/test_defectdojo_export.py, tests/reporting/test_delivery_gate.py, tests/reporting/test_report_review_cli.py, tests/reporting/test_delivery_failures.py, tests/demo/test_report.py
 
 ## MODIFIED Requirement: Hallazgo completo
-Cada hallazgo del informe, salvo los `discarded`, DEBE tener un CWE con la forma `CWE-<n>`, un vector CVSS v4.0 válido y una remediación no vacía, tomados de una entrada revisada de `data/report_catalog.yaml` (por CVE y, si no hay, por CWE). Una entrada sin revisor, con revisor `pendiente` o con revisor igual al autor NO DEBE usarse. Un puntaje CVSS 3.1 NO DEBE convertirse a 4.0. Si falta algún campo, el informe NO DEBE generarse ni escribirse ningún archivo, el error DEBE nombrar cada `finding_id` y cada campo faltante, y DEBE quedar un control `report.generation_failed` por hallazgo y campo. Un hallazgo sin CWE válido ni CVE DEBE nombrar solo el campo `cwe`; una entrada que existe pero no vale DEBE nombrar los campos por los que no vale, con motivo `invalid_catalog_entry` para los que no son `cwe`, `cvss_v4_vector` ni `remediation`.
+Cada hallazgo del informe, salvo los `discarded`, DEBE tener un CWE con la forma `CWE-<n>`, un vector CVSS v4.0 válido y una remediación no vacía, tomados de una entrada revisada de `data/report_catalog.yaml` (por CVE y, si no hay, por CWE). Una entrada sin revisor, con revisor `pendiente` o con revisor igual al autor NO DEBE usarse. Un puntaje CVSS 3.1 NO DEBE convertirse a 4.0. Si falta algún campo, el informe NO DEBE generarse ni escribirse ningún archivo, el error DEBE nombrar cada `finding_id` y cada campo faltante, y DEBE quedar un control `report.generation_failed` por hallazgo y campo. Un hallazgo sin CWE válido ni CVE DEBE nombrar solo el campo `cwe`; una entrada que existe pero no vale DEBE nombrar los campos por los que no vale, con motivo `invalid_catalog_entry` para los que no son `cwe`, `cvss_v4_vector` ni `remediation`. Si el feed no trae CWE, una entrada revisada por CVE PUEDE traer `cwe`; si el feed trae uno distinto, el informe DEBE fallar nombrando el campo `cwe`. Una entrada por CWE NO DEBE traer `cwe`.
 
 ### Scenario: hallazgo sin CWE
 - GIVEN un hallazgo con CWE `unknown`
 - WHEN se genera el informe
 - THEN falla con `MissingField` que nombra el `finding_id` y el campo `cwe`, no existe `report-v1.json` y la bitácora tiene `report.generation_failed` ABORTED con motivo `missing_cwe` y `subject` igual al `finding_id`
+
+### Scenario: CVE sin CWE en el feed y con CWE curado
+- GIVEN un hallazgo con `CVE-2099-0002` y CWE `unknown`, y una entrada revisada para ese CVE con `cwe: CWE-22`
+- WHEN se genera el informe
+- THEN el hallazgo sale con `CWE-22`, su entrada es la del CVE y las referencias empiezan por `CWE-22`
+
+### Scenario: CWE curado distinto del feed
+- GIVEN un hallazgo con `CVE-2099-0001` y `CWE-22`, y una entrada para ese CVE con `cwe: CWE-79`
+- WHEN se genera el informe
+- THEN falla nombrando el campo `cwe` y no se escribe ningún archivo
 
 ### Scenario: hallazgo sin remediación
 - GIVEN un hallazgo cuya entrada curada tiene `remediation` vacía o solo espacios
@@ -153,12 +163,17 @@ El informe DEBE tener, en este orden: resumen ejecutivo, introducción (alcance 
 ### Scenario: resumen sin jerga
 - GIVEN hallazgos con CVE, CWE, vector e IP
 - WHEN se genera el resumen ejecutivo
-- THEN no contiene ninguna de esas expresiones y sí la postura general y el conteo por severidad
+- THEN no contiene ninguna de esas expresiones y sí el nivel de riesgo general y el conteo por severidad
 
-### Scenario: postura general
+### Scenario: nivel de riesgo general
 - GIVEN un informe con un hallazgo `High` y ninguno `Critical`
 - WHEN se genera el resumen ejecutivo
-- THEN la postura general es "alta"
+- THEN el nivel de riesgo general es "alto"
+
+### Scenario: el mismo hallazgo en varios hosts
+- GIVEN el mismo CWE con entrada curada en `dvwa.lab.test` y en `www.dvwa.lab.test`
+- WHEN se genera el resumen ejecutivo
+- THEN los hallazgos principales y las recomendaciones lo nombran una sola vez
 
 ### Scenario: impacto curado con jerga
 - GIVEN una entrada curada cuyo `business_impact` contiene `CWE-79`

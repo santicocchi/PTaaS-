@@ -119,3 +119,52 @@ def test_tabla_del_repo_sin_revisar_no_vale():
     catalog = ReportCatalog.load()
     assert catalog.raw
     assert all(entry_problems(k, v) == ["reviewer"] for k, v in catalog.raw.items())
+
+
+# ---- el CWE lo pone la tabla curada cuando el feed no lo trae (decisión del 20/11) ----------
+
+def test_cve_sin_cwe_con_cwe_curado(tmp_path):
+    import json
+    lab = Lab(tmp_path, entries={"CVE-2099-0002": entry(cwe="CWE-22")})
+    lab.finding("f-1", cwe="unknown", cve="CVE-2099-0002")
+    rep = lab.generate()
+    (f,) = json.loads(rep.path.read_bytes())["findings"]
+    assert (f["cve"], f["cwe"], f["catalog_entry"]) == ("CVE-2099-0002", "CWE-22",
+                                                        "CVE-2099-0002")
+    assert f["references"][0] == "CWE-22"
+
+
+def test_cve_sin_cwe_y_entrada_sin_cwe(tmp_path):
+    lab = Lab(tmp_path, entries={"CVE-2099-0002": entry()})
+    lab.finding("f-1", cwe="unknown", cve="CVE-2099-0002")
+    with pytest.raises(MissingField) as exc:
+        lab.generate()
+    assert exc.value.missing == [("f-1", "cwe")]
+
+
+def test_cwe_curado_distinto_del_feed(tmp_path):
+    lab = Lab(tmp_path, entries={"CVE-2099-0001": entry(cwe="CWE-79")})
+    lab.finding("f-1", cwe="CWE-22", cve="CVE-2099-0001")
+    with pytest.raises(MissingField) as exc:
+        lab.generate()
+    assert exc.value.missing == [("f-1", "cwe")]
+    assert lab.files() == []
+
+
+def test_cwe_curado_igual_al_feed(tmp_path):
+    lab = Lab(tmp_path, entries={"CVE-2099-0001": entry(cwe="CWE-22")})
+    lab.finding("f-1", cwe="CWE-22", cve="CVE-2099-0001")
+    lab.generate()
+
+
+@pytest.mark.parametrize("key,cwe", [("CWE-693", "CWE-22"),        # solo en entradas por CVE
+                                     ("CVE-2099-0002", "22"),
+                                     ("CVE-2099-0002", "unknown"),
+                                     ("CVE-2099-0002", ["CWE-22"])])
+def test_cwe_curado_invalido(tmp_path, key, cwe):
+    lab = Lab(tmp_path, entries={key: entry(cwe=cwe)})
+    lab.finding("f-1", cwe="CWE-693" if key.startswith("CWE") else "unknown",
+                cve=None if key.startswith("CWE") else key)
+    with pytest.raises(MissingField) as exc:
+        lab.generate()
+    assert ("f-1", "cwe") in exc.value.missing

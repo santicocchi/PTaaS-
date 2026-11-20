@@ -201,3 +201,60 @@ Riesgo aceptado (design.md del 006): el Reviewer es quien tenga acceso al host d
 laboratorio; la CLI no lo compara con el aprobador del RoE.
 
 Corrida en el laboratorio (20/11/2026, nube): ver el PR de esta demo.
+
+---
+
+# Informe y entrega (change 007)
+
+El último tramo del recorrido: con lo que dejó el loop C en `demo/state/`, se genera el
+informe, el Reviewer lo aprueba y se entrega. Corre en el host, igual que el loop C, y **no
+abre ninguna conexión**. El RoE de la demo no tiene `report_destinations`, así que la entrega
+es el archivo de importación de DefectDojo (Generic Findings Import) más el resumen de la
+entrega.
+
+```bash
+# 1 y 2. Pipeline y loop C, como arriba (con sus gates)
+
+# 3. Genera report-v1 y muestra el comando de aprobación, con el hash de esa versión
+python -m demo.report --engagement <engagement>
+
+# 4. El Reviewer lee el informe (demo/state/reports/<engagement>/report-v1.md) y lo aprueba
+python -m harness.review --engagement <engagement> --state-dir demo/state \
+    --audit-dir demo/state report approve report-v1 --sha256 <hash> \
+    [--ack-unvalidated-high] --reviewer <tu-usuario> --reason "<por qué>"
+
+# 5. Se entrega solo esa versión, y el engagement pasa a DELIVERED
+python -m demo.report --engagement <engagement>
+```
+
+**Antes de la primera corrida:** el informe usa la tabla curada `data/report_catalog.yaml`.
+Cada entrada necesita un `reviewer` distinto del autor. Mientras diga `pendiente`, la demo
+falla y lista qué hallazgo y qué campo faltan, sin escribir ningún informe. En simulación
+además se suman las entradas de los CVE sintéticos (`demo/report_catalog_sim.yaml`), que
+también se revisan y solo pueden traer CVE `CVE-2099-…`. Con una entrega de laboratorio esa tabla no se
+lee, y si la bitácora del loop C no corresponde al modo de la entrega (una imagen simulada en
+un recorrido de laboratorio, o al revés) la demo no genera nada.
+
+Qué mirar en cada paso:
+
+- **Paso 3:** `report.generated` en la bitácora del host, con el SHA-256 del informe, y un
+  `report.delivery` PENDING_HITL. El informe dice qué hallazgos se validaron en el sandbox y
+  cuáles no. Si hay altos o críticos sin validar, aprobar exige `--ack-unvalidated-high`.
+- **Paso 4:** `hitl.approve_delivery` con el Reviewer. La aprobación vale 60 minutos y solo
+  para esa versión y ese hash: si el archivo cambia, la entrega se aborta con
+  `evidence_mismatch`.
+- **Paso 5:** `report.delivered` con el resumen de la entrega como evidencia, y en
+  `demo/state/reports/<engagement>/` el archivo `defectdojo-report-v1.json` para importar a
+  mano. Volver a correr no entrega de nuevo: la bitácora ya tiene `report.delivered`.
+
+Volver a correr el paso 3 no genera otra versión. `--new-version` genera la siguiente, y la
+aprobación anterior deja de valer.
+
+**Qué sale de dónde.** Los hallazgos salen de la entrega que importó el loop C, verificada
+contra su `handoff.imported`. El estado de validación sale de la bitácora, no de la entrega.
+Los activos de la sección 3 se arman con los hosts web de la entrega que están en el
+laboratorio y en el RoE (los demás se listan y no entran), con los puertos de las URL observadas.
+En esta demo no muestran tecnologías, así que el aviso del anexo D sale sin producto ni versión.
+El informe tampoco dice que es una simulación: en simulación, "validado en sandbox" es el
+docker simulado. Tampoco aparecen los registros de relevamiento: el grafo y la bitácora del
+runner (`demo/out`) no se leen porque el runner los puede escribir.

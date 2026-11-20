@@ -1,0 +1,45 @@
+# Entradas de la tabla curada SOLO para la simulación (change 007). Cubren los CVE sintéticos
+# de data/feeds/nvd.json (CVE-2099-…), que no existen. demo/report.py las suma a
+# data/report_catalog.yaml solo si la entrega importada es de modo simulación; con --lab no
+# se leen. Cuando el equipo genere el feed real, los CVE reales necesitan sus propias entradas
+# en data/report_catalog.yaml.
+#
+# Mismas reglas que la tabla del repo: cada entrada la revisa alguien distinto del autor.
+catalog_version: "0.1.0-sim"
+entries:
+  CVE-2099-0001:
+    title: Lectura de archivos fuera del sitio publicado (vulnerabilidad sintética)
+    technical_description: >-
+      Vulnerabilidad sintética del feed de prueba: la versión del servidor web figura como
+      afectada por un recorrido de rutas que permitiría leer archivos fuera del directorio
+      publicado. Se detectó solo por la versión informada, sin una verificación del catálogo.
+    business_impact: >-
+      Si fuera real, un atacante podría leer archivos internos del servidor, como
+      configuraciones con contraseñas.
+    remediation: >-
+      Actualizar el servidor web a una versión corregida. Mientras tanto, restringir el acceso
+      a los directorios fuera del sitio publicado.
+    references: [WSTG-ATHZ-01]
+    cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N"
+    author: claude
+    reviewer: pendiente
+    date: "2026-11-20"
+  CVE-2099-0002:
+    cwe: CWE-20
+    title: Validación insuficiente de solicitudes (vulnerabilidad sintética)
+    technical_description: >-
+      Vulnerabilidad sintética del feed de prueba, publicada sin CWE: la versión del servidor
+      web figura como afectada por una validación insuficiente de solicitudes. El CWE lo pone
+      esta entrada. Se detectó solo por la versión informada, sin una verificación del
+      catálogo.
+    business_impact: >-
+      Si fuera real, una solicitud armada a propósito podría hacer que el servidor se comporte
+      de forma inesperada.
+    remediation: >-
+      Actualizar el servidor web a una versión corregida. Revisar los avisos del fabricante
+      para esa versión.
+    references: [WSTG-INPV-00]
+    cvss_v4_vector: "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N"
+    author: claude
+    reviewer: pendiente
+    date: "2026-11-20"
