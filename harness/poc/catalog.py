@@ -114,8 +114,14 @@ def cookie_flags_missing(r: ResponseRecord) -> tuple[bool, str]:
     return (bool(problems), "; ".join(problems) if problems else "flags correctos")
 
 
+_DIRLIST_RE = re.compile(r"<title>\s*index of /", re.IGNORECASE)
+_ERROR_SIGNATURES = tuple(re.compile(s, re.IGNORECASE) for s in (
+    r"stack trace", r"traceback \(most recent call", r"at [\w.$]+\(.+\.(java|js|py|php):\d+",
+    r"fatal error:.*on line \d+", r"sqlstate\[", r"you have an error in your sql syntax"))
+
+
 def directory_listing_enabled(r: ResponseRecord) -> tuple[bool, str]:
-    hit = r.status == 200 and re.search(r"<title>\s*index of /", r.body, re.IGNORECASE) is not None
+    hit = r.status == 200 and _DIRLIST_RE.search(r.body) is not None
     return (hit, "listado de directorio visible" if hit else "sin listado")
 
 
@@ -128,9 +134,7 @@ def input_reflected_unencoded(r: ResponseRecord) -> tuple[bool, str]:
 
 
 def verbose_error_disclosure(r: ResponseRecord) -> tuple[bool, str]:
-    sigs = [r"stack trace", r"traceback \(most recent call", r"at [\w.$]+\(.+\.(java|js|py|php):\d+",
-            r"fatal error:.*on line \d+", r"sqlstate\[", r"you have an error in your sql syntax"]
-    found = [s for s in sigs if re.search(s, r.body, re.IGNORECASE)]
+    found = [s for s in _ERROR_SIGNATURES if s.search(r.body)]
     return (bool(found), f"firmas de error: {len(found)}" if found else "sin divulgación")
 
 
@@ -142,6 +146,23 @@ EVALUATORS: dict[str, Callable[[ResponseRecord], tuple[bool, str]]] = {
     "input_reflected_unencoded": input_reflected_unencoded,
     "verbose_error_disclosure": verbose_error_disclosure,
 }
+
+
+def match_span(evaluator: str, r: ResponseRecord) -> tuple[int, int] | None:
+    """Dónde está, en el cuerpo, lo que vio el evaluador (para el extracto de la evidencia)."""
+    if evaluator == "input_reflected_unencoded" and r.canary:
+        i = r.body.find(r.canary)
+        return None if i < 0 else (i, i + len(r.canary))
+    patterns: tuple[re.Pattern[str], ...] = ()
+    if evaluator == "directory_listing_enabled":
+        patterns = (_DIRLIST_RE,)
+    elif evaluator == "verbose_error_disclosure":
+        patterns = _ERROR_SIGNATURES
+    for pattern in patterns:
+        m = pattern.search(r.body)
+        if m:
+            return m.span()
+    return None
 
 
 def new_canary() -> str:
