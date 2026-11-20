@@ -123,10 +123,12 @@ def test_aprobar_v1_y_generar_v2_no_entrega(validated, catalog, capsys):
     assert controls(state, eng, "report.delivered") == []
 
 
-def test_tabla_curada_sin_revisar(validated, capsys):
-    """Con la tabla del repo (`reviewer: pendiente`) no se genera nada y se dice qué falta."""
+def test_tabla_curada_sin_revisar(validated, catalog, capsys):
+    """Con entradas en `reviewer: pendiente` no se genera nada y se dice qué falta."""
     state, eng = validated
-    assert demo(state, eng) == 1
+    for path in catalog:
+        path.write_text(path.read_text().replace("revisor-de-prueba", "pendiente"))
+    assert demo(state, eng, catalog) == 1
     out = capsys.readouterr().out
     assert "no se generó" in out and "reviewer" in out
     assert controls(state, eng, "report.generated") == []
