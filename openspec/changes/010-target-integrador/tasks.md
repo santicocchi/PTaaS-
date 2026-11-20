@@ -8,7 +8,7 @@
 ## Implementación (test primero por Scenario)
 - [x] 2.1 `lab/docker-compose.yml`: servicio `phantomcorp` (perfil `integrador`, red `lab`, 10.99.0.12, alias) y `PTAAS_INTEGRADOR_CONTEXT` en el README del lab
 - [x] 2.2 `profiles.yaml` y `LAB_TARGET_HOSTS`: `phantomcorp.lab.test`
-- [ ] 2.3 Catálogo `0.3.0`: `lab_targets` con `phantomcorp` (propuesto por claude; falta la firma de Santi en `approved_by` / `approved_at`)
+- [x] 2.3 Catálogo `0.3.0`: `lab_targets` con `phantomcorp` (propuesto por claude, aprobado por santiago el 2026-11-20)
 - [x] 2.4 `demo/roe-integrador.yaml`
 - [x] 2.5 ZAP: `setOptionParseRobotsTxt` fijo en `true` (delta de `tool-adapters`)
 - [ ] 2.6 Demos (`pipeline`, `validation`, `report`): elegir la RoE entre las del repo (`roe-pipeline` o `roe-integrador`) sin aflojar el control de la entrega del loop C
