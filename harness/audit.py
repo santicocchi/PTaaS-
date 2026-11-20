@@ -166,11 +166,13 @@ class SqliteAuditLog:
                             reason=reason, evidence=evidence)
 
     def record_control(self, engagement_id: str, agent: str, action: str, target: str,
-                       result: Result, reason: str | None = None) -> Entry:
+                       result: Result, reason: str | None = None,
+                       evidence: str | None = None) -> Entry:
         if engagement_id != self.engagement_id:
             raise ValueError("registro de control de otro engagement")
         return self._append(engagement=engagement_id, agent=agent, action=action,
-                            target=target, phase="control", result=result, reason=reason)
+                            target=target, phase="control", result=result, reason=reason,
+                            evidence=evidence)
 
     def record_kill(self, engagement_id: str, agent: str) -> Entry:
         return self.record_control(engagement_id, agent, KILLSWITCH_ACTION, engagement_id,

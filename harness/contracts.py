@@ -91,11 +91,18 @@ BLOCK_REASONS = frozenset({
     "not_allowlisted", "destructive", "no_adapter", "adapter_phase",
     "token_revoked", "excluded", "roe_invalid", "roe_tampered", "phase_not_in_roe",
     "outside_window", "dns_out_of_scope", "dns_unresolved",
+    "missing_subject",                    # 006: acción con gate humano sin `subject`
 })
 
 # Motivos de un registro no BLOCKED: solo errores de herramienta (change 004).
 TOOL_ERROR_REASONS = frozenset({"timeout", "binary_missing", "exec_error", "exit_code",
-                                "invalid_output", "adapter_error"})
+                                "invalid_output", "adapter_error", "sandbox_error"})
+
+# 006: cierre de un hallazgo en VALIDATE sin tráfico (o sin más tráfico). Solo en el registro
+# de control `validation.closed`, siempre ABORTED.
+VALIDATION_CLOSED_ACTION = "validation.closed"
+VALIDATION_CLOSE_REASONS = frozenset({"no_catalog_entry", "reviewer_rejected",
+                                      "reviewer_timeout", "request_budget_exhausted"})
 
 Resolver = Callable[[str], list[str]]
 
@@ -247,7 +254,11 @@ def make_entry(*, prev: str, engagement: str, agent: str, action: str, target: s
         "action": action, "target": target, "phase": phase,
         "result": result.value, "prev": prev,
     }
-    if result is Result.BLOCKED:
+    if action == VALIDATION_CLOSED_ACTION:
+        if result is not Result.ABORTED or reason not in VALIDATION_CLOSE_REASONS:
+            raise ValueError(f"cierre de validación inválido: {result.value} {reason!r}")
+        body["reason"] = reason
+    elif result is Result.BLOCKED:
         if reason not in BLOCK_REASONS:
             raise ValueError(f"motivo de bloqueo inválido: {reason!r}")
         body["reason"] = reason
@@ -300,10 +311,12 @@ class AuditLog:
                             reason=reason, evidence=evidence)
 
     def record_control(self, engagement_id: str, agent: str, action: str, target: str,
-                       result: Result, reason: str | None = None) -> Entry:
+                       result: Result, reason: str | None = None,
+                       evidence: str | None = None) -> Entry:
         """Registro de control (emisión, revocación, kill switch): fase `control`."""
         return self._append(engagement=engagement_id, agent=agent, action=action,
-                            target=target, phase="control", result=result, reason=reason)
+                            target=target, phase="control", result=result, reason=reason,
+                            evidence=evidence)
 
     def record_kill(self, engagement_id: str, agent: str) -> Entry:
         return self.record_control(engagement_id, agent, KILLSWITCH_ACTION, engagement_id,
@@ -329,7 +342,10 @@ class AuditSink(Protocol):
                result: Result, reason: str | None = None,
                evidence: str | None = None) -> Entry: ...
     def record_control(self, engagement_id: str, agent: str, action: str, target: str,
-                       result: Result, reason: str | None = None) -> Entry: ...
+                       result: Result, reason: str | None = None,
+                       evidence: str | None = None) -> Entry: ...
+    @property
+    def entries(self) -> list[Entry]: ...
     def record_kill(self, engagement_id: str, agent: str) -> Entry: ...
     def control_engagements(self, action: str, result: Result = ...) -> set[str]: ...
     def killed_engagements(self) -> set[str]: ...
