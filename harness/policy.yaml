@@ -22,6 +22,8 @@ phases:
 gates_hitl:
   - before: validate        # aprobación por hallazgo
     approver_role: reviewer
+    validation_timeout_minutes: 60   # 006, D5: sin decisión → not_validated (reviewer_timeout)
+    approval_ttl_minutes: 60         # 006, D5: una aprobación vencida vale lo mismo que ninguna
   - before: deliver
     approver_role: reviewer
   - before: first_active_action
@@ -38,3 +40,9 @@ sandbox:
   ephemeral: true
   persistence: none
   poc_source: poc_catalog_versioned   # nunca síntesis de exploits nuevos
+  limits:                             # change 006, D4. Superar un límite nunca da un positivo.
+    request_timeout_s: 10             # lo corta el script del sandbox: `timeout`
+    container_timeout_s: 30           # lo corta el adaptador y destruye el contenedor: `timeout`
+    max_response_bytes: 65536         # se lee hasta acá y se marca `truncated`
+    max_requests_per_finding: 2       # igual a max_loop_iterations.validation
+    max_requests_per_engagement: 20   # se cuenta en la bitácora: `request_budget_exhausted`

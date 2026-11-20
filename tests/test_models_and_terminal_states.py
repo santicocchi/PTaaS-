@@ -1,7 +1,8 @@
 """Scenarios de agent-contracts (scope_guard sin LLM) y engagement-lifecycle (estado terminal)."""
+from pathlib import Path
+
 import pytest
 import yaml
-from pathlib import Path
 
 from harness.engagement import Engagement, State, TransitionError
 

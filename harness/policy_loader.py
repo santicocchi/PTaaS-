@@ -11,15 +11,17 @@ from harness.contracts import Phase
 _DIR = Path(__file__).resolve().parent
 
 
-def load_policy(path: Path = _DIR / "policy.yaml") -> dict:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+def load_policy(path: Path = _DIR / "policy.yaml") -> dict[str, Any]:
+    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return data
 
 
-def load_tools(path: Path = _DIR / "tools.yaml") -> dict:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+def load_tools(path: Path = _DIR / "tools.yaml") -> dict[str, Any]:
+    data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return data
 
 
-def phase_allowlist(policy: dict | None = None) -> dict[Phase, set[str]]:
+def phase_allowlist(policy: dict[str, Any] | None = None) -> dict[Phase, set[str]]:
     policy = policy or load_policy()
     return {Phase(ph): set(v["allowed"]) for ph, v in policy["phases"].items()}
 
@@ -35,7 +37,8 @@ def hitl_phases(policy: dict[str, Any] | None = None) -> set[Phase]:
     return {Phase(g["before"]) for g in policy.get("gates_hitl", []) if g["before"] in fases}
 
 
-def inconsistencies(policy: dict | None = None, tools: dict | None = None) -> dict[str, set]:
+def inconsistencies(policy: dict[str, Any] | None = None, tools: dict[str, Any] | None = None
+                    ) -> dict[str, set[tuple[str, str]]]:
     policy, tools = policy or load_policy(), tools or load_tools()
     in_policy = {(ph, c) for ph, v in policy["phases"].items() for c in v["allowed"]}
     in_tools = {(x["phase"], x["capability"]) for x in tools["mvp"]}

@@ -1,6 +1,6 @@
 # Spec — authorization
 
-Tests: tests/test_authorization.py, tests/test_roe_and_tokens.py, tests/test_red_team_guard.py, tests/authorization/test_pinned_addresses.py, tests/authorization/test_review_004.py
+Tests: tests/test_authorization.py, tests/test_roe_and_tokens.py, tests/test_red_team_guard.py, tests/authorization/test_pinned_addresses.py, tests/authorization/test_review_004.py, tests/authorization/test_hitl_subject.py
 
 ## Requirement: Enforcement de alcance
 El sistema DEBE rechazar toda acción activa sobre un activo fuera del RoE vigente.
@@ -278,4 +278,39 @@ El RoE PUEDE incluir `criticality`, un mapa de dominio o IP del alcance a un ent
 ### Scenario: criticidad de un host fuera del alcance
 - GIVEN un RoE con `criticality: {otro.lab.test: 4}` y `otro.lab.test` fuera del alcance
 - WHEN se parsea
+- THEN se rechaza
+
+<!-- Archivado desde el change 006-sandbox-validation-loop-c -->
+
+## Requirement: Aprobación HITL con sujeto
+Una aprobación humana DEBE quedar atada a `(engagement, fase, acción, target canónico, subject)`. Una acción con gate humano invocada sin `subject` DEBE bloquearse con motivo `missing_subject` y quedar en bitácora. Una aprobación retirada NO DEBE habilitar nada, y un `subject` que no es un `finding_id` válido NO DEBE poder aprobarse.
+
+### Scenario: validación sin sujeto
+- GIVEN un token de VALIDATE y la acción `poc_catalog.run_parametrized`
+- WHEN se invoca sin `subject`
+- THEN el resultado es BLOCKED con `missing_subject` y el adaptador no se ejecuta
+
+### Scenario: sujeto distinto
+- GIVEN una aprobación para el hallazgo `F-1` en `dvwa.lab.test`
+- WHEN se invoca con `subject="F-2"` sobre el mismo host
+- THEN el resultado es PENDING_HITL y el adaptador no se ejecuta
+
+### Scenario: sujeto aprobado
+- GIVEN una aprobación para `F-1` en `dvwa.lab.test`
+- WHEN se invoca con `subject="F-1"` sobre ese host
+- THEN el adaptador se ejecuta
+
+### Scenario: aprobación del sujeto en otro host
+- GIVEN una aprobación para `F-1` en `10.0.0.5`
+- WHEN se invoca con `subject="F-1"` sobre `dvwa.lab.test`
+- THEN el resultado es PENDING_HITL y el adaptador no se ejecuta
+
+### Scenario: aprobación retirada
+- GIVEN una aprobación para `F-1` que el orquestador retiró
+- WHEN se invoca con `subject="F-1"`
+- THEN el resultado es PENDING_HITL y el adaptador no se ejecuta
+
+### Scenario: sujeto inválido
+- GIVEN un `subject` vacío, con espacios, con `/` o de más de 128 caracteres
+- WHEN se intenta aprobar
 - THEN se rechaza

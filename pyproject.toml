@@ -12,6 +12,7 @@ live = ["anthropic"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = ["lab: necesita docker y el laboratorio aislado (se salta sin docker)"]
 
 [tool.ruff]
 line-length = 100

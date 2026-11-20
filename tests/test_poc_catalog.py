@@ -1,9 +1,16 @@
 """Scenarios de `validation`: solo catálogo, gate humano, parámetros acotados."""
 import pytest
 
-from harness.poc.catalog import (ApprovalRequired, InvalidCatalog, NotInCatalog,
-                                 ParameterError, ResponseRecord, load_catalog,
-                                 run_parametrized, validate_entries)
+from harness.poc.catalog import (
+    ApprovalRequired,
+    InvalidCatalog,
+    NotInCatalog,
+    ParameterError,
+    ResponseRecord,
+    load_catalog,
+    run_parametrized,
+    validate_entries,
+)
 
 BASE = {"base_url": "http://dvwa.lab.test", "path": "/"}
 
@@ -110,3 +117,49 @@ def test_entrada_sin_aprobacion_registrada_se_rechaza(cat):
     base = dict(next(iter(cat.values()))); base.pop("approved_at")
     with pytest.raises(InvalidCatalog):
         validate_entries([base])
+
+
+# --- change 006: proposed_by, evaluador conocido y canario por intento ---------------------
+
+def test_toda_entrada_tiene_proponente_distinto_del_aprobador(cat):
+    for e in cat.values():
+        assert e["proposed_by"] and e["proposed_by"] != e["approved_by"], e["id"]
+
+
+def test_entrada_sin_proponente_se_rechaza(cat):
+    base = dict(next(iter(cat.values()))); base.pop("proposed_by")
+    with pytest.raises(InvalidCatalog):
+        validate_entries([base])
+
+
+@pytest.mark.parametrize("approver", ["author@lab", " Author@Lab "])
+def test_autoaprobacion(cat, approver):
+    base = {**next(iter(cat.values())), "proposed_by": "author@lab", "approved_by": approver}
+    with pytest.raises(InvalidCatalog, match=base["id"]):
+        validate_entries([base])
+
+
+def test_evaluador_inexistente(cat):
+    base = {**next(iter(cat.values())), "evaluator": "run_shell"}
+    with pytest.raises(InvalidCatalog, match="run_shell"):
+        validate_entries([base])
+
+
+def test_canario_de_una_corrida_anterior(cat):
+    params = {**BASE, "param_name": "q"}
+    vistos = []
+
+    def sender(poc_id, p):
+        vistos.append(p["canary"])
+        # La respuesta refleja el canario del intento 1 y además dice que ese fue el enviado.
+        return ResponseRecord(200, {}, f"<p>{vistos[0]}</p>", canary=vistos[0])
+
+    assert run_parametrized(cat, "POC-REFLECT-001", params, True, sender).status == "validated"
+    segundo = run_parametrized(cat, "POC-REFLECT-001", params, True, sender)
+    assert vistos[0] != vistos[1]
+    assert segundo.status == "not_validated"
+
+
+def test_version_del_catalogo():
+    from harness.poc.catalog import catalog_version
+    assert catalog_version() == "0.2.0"

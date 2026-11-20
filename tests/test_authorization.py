@@ -76,11 +76,12 @@ def test_validacion_sin_aprobacion_queda_pending_hitl(env):
     h, guard, audit, _, adapters = env
     t = make_token(phase=Phase.VALIDATE)
     a = act("poc_catalog.run_parametrized", Phase.VALIDATE, requires_human_approval=True)
-    out = h.invoke("validation", a, "10.0.0.5", t)
+    out = h.invoke("validation", a, "10.0.0.5", t, subject="F-1")
     assert out["status"] == "PENDING_HITL"
     assert audit.entries[-1]["result"] == "PENDING_HITL" and adapters[a.name].calls == []
-    guard.approve(a.name, "10.0.0.5", engagement_id="eng-1", phase=Phase.VALIDATE)
-    assert h.invoke("validation", a, "10.0.0.5", t)["ok"]
+    guard.approve(a.name, "10.0.0.5", engagement_id="eng-1", phase=Phase.VALIDATE,
+                  subject="F-1")
+    assert h.invoke("validation", a, "10.0.0.5", t, subject="F-1")["ok"]
 
 
 def test_capability_sin_adaptador_se_bloquea(env, token, monkeypatch):
@@ -91,7 +92,7 @@ def test_capability_sin_adaptador_se_bloquea(env, token, monkeypatch):
 
 
 def test_adaptador_no_habilitado_en_la_fase_se_bloquea(env, token):
-    h, guard, _, _, adapters = env
+    h, guard, *_ = env
     guard.phase_allowlist[Phase.RECON].add("zap.baseline_scan")
     with pytest.raises(ScopeViolation):
         h.invoke("recon", act("zap.baseline_scan", Phase.RECON), "10.0.0.5", token)
@@ -106,9 +107,10 @@ def _validate_action():
 def test_aprobacion_reutilizada_en_otro_engagement_queda_pending(env):
     h, guard, audit, _, adapters = env
     a = _validate_action()
-    guard.approve(a.name, "10.0.0.5", engagement_id="eng-1", phase=Phase.VALIDATE)
+    guard.approve(a.name, "10.0.0.5", engagement_id="eng-1", phase=Phase.VALIDATE,
+                  subject="F-1")
     t_eng2 = make_token(phase=Phase.VALIDATE, engagement_id="eng-2")
-    out = h.invoke("validation", a, "10.0.0.5", t_eng2)
+    out = h.invoke("validation", a, "10.0.0.5", t_eng2, subject="F-1")
     assert out["status"] == "PENDING_HITL"
     assert audit.entries[-1]["result"] == "PENDING_HITL"
     assert audit.entries[-1]["engagement"] == "eng-2"
@@ -118,8 +120,10 @@ def test_aprobacion_reutilizada_en_otro_engagement_queda_pending(env):
 def test_aprobacion_valida_para_su_engagement_y_fase(env):
     h, guard, audit, _, adapters = env
     a = _validate_action()
-    guard.approve(a.name, "10.0.0.5", engagement_id="eng-1", phase=Phase.VALIDATE)
-    out = h.invoke("validation", a, "10.0.0.5", make_token(phase=Phase.VALIDATE))
+    guard.approve(a.name, "10.0.0.5", engagement_id="eng-1", phase=Phase.VALIDATE,
+                  subject="F-1")
+    out = h.invoke("validation", a, "10.0.0.5", make_token(phase=Phase.VALIDATE),
+                   subject="F-1")
     assert out["ok"] and adapters[a.name].calls == ["10.0.0.5"]
     assert audit.entries[-1]["result"] == "OK"
 
@@ -165,9 +169,11 @@ def test_objetivo_con_puerto_esquema_o_ruta_se_bloquea(env, token, target):
 def test_aprobacion_de_otra_fase_no_habilita(env):
     h, guard, _, _, adapters = env
     a = _validate_action()
-    guard.approve(a.name, "dvwa.lab.test", engagement_id="eng-1", phase=Phase.ANALYZE)
+    guard.approve(a.name, "dvwa.lab.test", engagement_id="eng-1", phase=Phase.ANALYZE,
+                  subject="F-1")
     t = make_token(phase=Phase.VALIDATE, domains=("dvwa.lab.test",))
-    assert h.invoke("validation", a, "dvwa.lab.test", t)["status"] == "PENDING_HITL"
+    out = h.invoke("validation", a, "dvwa.lab.test", t, subject="F-1")
+    assert out["status"] == "PENDING_HITL"
     assert adapters[a.name].calls == []
 
 

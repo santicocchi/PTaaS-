@@ -206,10 +206,10 @@ def prepare_roe(engagement_id: str, now: datetime,
 # ---- la demo -------------------------------------------------------------------------------
 
 def attempt(harness: Harness, agent: str, action: Action, target: str,
-            token: ScopeToken) -> dict[str, Any] | None:
+            token: ScopeToken, subject: str | None = None) -> dict[str, Any] | None:
     label = f"{agent} → {action.name} sobre {target}"
     try:
-        out = harness.invoke(agent, action, target, token)
+        out = harness.invoke(agent, action, target, token, subject=subject)
     except ScopeViolation as exc:
         reason = str(exc).rsplit(": ", 1)[-1]
         Show.line(f"{bad('BLOQUEADA')}  {label}  {dim('motivo: ' + reason)}")
@@ -329,11 +329,12 @@ def run(lab: bool, pause: bool, out_dir: Path) -> int:
     validate = issuer.issue(roe, Phase.VALIDATE)
     poc_action = Action("poc_catalog.run_parametrized", Phase.VALIDATE,
                         requires_human_approval=False)
-    attempt(harness, "validation-agent", poc_action, "dvwa.lab.test", validate)
+    attempt(harness, "validation-agent", poc_action, "dvwa.lab.test", validate, "F-DEMO-1")
     guard.approve(poc_action.name, "dvwa.lab.test", engagement_id=engagement_id,
-                  phase=Phase.VALIDATE)
-    Show.line(dim("el reviewer aprueba POC-HDR-001 sobre dvwa.lab.test"))
-    evidence = attempt(harness, "validation-agent", poc_action, "dvwa.lab.test", validate)
+                  phase=Phase.VALIDATE, subject="F-DEMO-1")
+    Show.line(dim("el reviewer aprueba POC-HDR-001 para el hallazgo F-DEMO-1 en dvwa.lab.test"))
+    evidence = attempt(harness, "validation-agent", poc_action, "dvwa.lab.test", validate,
+                       "F-DEMO-1")
     if evidence is not None:
         sample = "" if lab else dim("  (respuesta de ejemplo)")
         Show.line(f"{evidence['poc_id']}: {evidence['status']} · {evidence['detail']}{sample}")

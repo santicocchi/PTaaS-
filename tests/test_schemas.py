@@ -1,7 +1,14 @@
 import pytest
 
-from harness.schemas import (Asset, CandidateFinding, PrioritizedVuln, SchemaError,
-                             SchemaGate, dedupe, priority_score)
+from harness.schemas import (
+    Asset,
+    CandidateFinding,
+    PrioritizedVuln,
+    SchemaError,
+    SchemaGate,
+    dedupe,
+    priority_score,
+)
 
 
 def test_activo_sin_herramienta_de_origen_se_rechaza():

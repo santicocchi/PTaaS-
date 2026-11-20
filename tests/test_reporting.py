@@ -6,9 +6,9 @@ VEC = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N"
 
 
 def f(**kw):
-    base = dict(id="F-1", title="Falta de CSP", asset="dvwa.lab.test", cwe="CWE-693",
-                cvss_v4_vector=VEC, remediation="Definir Content-Security-Policy",
-                validation_status="validated")
+    base = {"id": "F-1", "title": "Falta de CSP", "asset": "dvwa.lab.test", "cwe": "CWE-693",
+            "cvss_v4_vector": VEC, "remediation": "Definir Content-Security-Policy",
+            "validation_status": "validated"}
     return Finding(**{**base, **kw})
 
 

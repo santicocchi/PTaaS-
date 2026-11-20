@@ -45,6 +45,18 @@ services:
       tools:
         ipv4_address: 10.97.0.10
 
+  sandbox:
+    # Sandbox del loop C (change 006, D3): este servicio SOLO construye la imagen; no corre.
+    # harness/sandbox.py la lanza con `docker run --rm`, un contenedor por solicitud, en la red
+    # `lab` (internal: true). El runner no monta el socket de docker: por defecto el loop C
+    # corre en el host del laboratorio.
+    #   docker compose -f lab/docker-compose.yml --profile build build sandbox
+    build:
+      context: sandbox
+    image: ptaas-sandbox
+    profiles: [build]
+    network_mode: none
+
   zap:
     # ZAP 2.17.0 en modo daemon (change 005, D7). Llega a los objetivos por la red `lab`, pero su
     # API escucha SOLO en la red `tools` y solo acepta llamadas del runner (10.97.0.10) dirigidas

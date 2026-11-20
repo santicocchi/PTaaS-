@@ -125,7 +125,7 @@ def test_ventana_invertida_se_rechaza():
 
 
 def test_fecha_sin_zona_horaria_se_rechaza():
-    sin_zona = datetime(2026, 11, 20, 9)  # noqa: DTZ001 - es justamente el caso a probar
+    sin_zona = datetime(2026, 11, 20, 9)
     w = {"start": sin_zona, "end": datetime(2026, 11, 20, 18, tzinfo=UTC)}
     with pytest.raises(RoEError) as exc:
         parse_roe(roe_data(window=w))
