@@ -75,3 +75,20 @@ def test_accion_sin_gate_ignora_el_sujeto(env, token):
     h, _, audit, *_ = env
     out = h.invoke("recon", Action("httpx.probe", Phase.RECON), "10.0.0.5", token, subject="F-1")
     assert out["ok"] and audit.entries[-1]["result"] == "OK"
+
+
+# --- revisión M2: el subject queda en los registros de invoke --------------------------------
+def test_subject_en_los_registros_de_invoke(env):
+    h, guard, audit, *_ = env
+    h.invoke("validation", _action(), "dvwa.lab.test", _token(), subject="F-2")
+    assert audit.entries[-1]["result"] == "PENDING_HITL" and audit.entries[-1]["subject"] == "F-2"
+    _approve(guard, "F-1")
+    h.invoke("validation", _action(), "dvwa.lab.test", _token(), subject="F-1")
+    assert audit.entries[-1]["result"] == "OK" and audit.entries[-1]["subject"] == "F-1"
+
+
+def test_missing_subject_sin_subject_en_el_registro(env):
+    h, _, audit, *_ = env
+    with pytest.raises(ScopeViolation):
+        h.invoke("validation", _action(), "dvwa.lab.test", _token())
+    assert audit.entries[-1]["reason"] == "missing_subject" and "subject" not in audit.entries[-1]

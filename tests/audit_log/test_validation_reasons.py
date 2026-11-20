@@ -69,3 +69,55 @@ def test_control_con_evidencia():
     with pytest.raises(ValueError):
         audit.record_control("eng-1", "v", "validation.attempt", "F-1", Result.OK,
                              evidence="/abs/x.json#sha256=" + "a" * 64)
+
+
+# --- revisión M2: el hallazgo (subject) queda en la cadena -----------------------------------
+def test_subject_en_registro_y_control():
+    audit = AuditLog()
+    t = make_token(phase=Phase.VALIDATE)
+    e1 = audit.record("v", act("poc_catalog.run_parametrized", Phase.VALIDATE), "10.0.0.5", t,
+                      Result.PENDING_HITL, subject="F-1")
+    e2 = audit.record_control("eng-1", "reviewer:ana", "hitl.approve", "dvwa.lab.test",
+                              Result.OK, subject="F-1")
+    assert e1["subject"] == "F-1" and e2["subject"] == "F-1"
+    audit.verify_integrity()
+    audit.entries[-1]["subject"] = "F-2"                   # cambiarlo rompe la cadena
+    with pytest.raises(Exception):  # noqa: B017 - AuditIntegrityError
+        audit.verify_integrity()
+
+
+def test_sin_subject_el_registro_no_cambia():
+    entry = AuditLog().record_control("eng-1", "x", "token.issue", "recon", Result.OK)
+    assert "subject" not in entry
+
+
+@pytest.mark.parametrize("subject", ["", "a/b", "F 1"])
+def test_subject_invalido_se_rechaza(subject):
+    with pytest.raises(ValueError):
+        AuditLog().record_control("eng-1", "x", "hitl.approve", "h", Result.OK, subject=subject)
+
+
+def test_subject_persistido_en_sqlite_y_bitacora_vieja(tmp_path):
+    import sqlite3
+
+    from harness import audit as audit_mod
+    from harness.contracts import make_entry
+    # Bitácora creada antes de 006: sin columna `subject`, con un registro.
+    path = tmp_path / "eng-1.sqlite3"
+    con = sqlite3.connect(path)
+    con.executescript(audit_mod._SCHEMA.replace("  subject    TEXT,\n", ""))
+    e = make_entry(prev=audit_mod.genesis("eng-1"), engagement="eng-1", agent="x",
+                   action="token.issue", target="recon", phase="control", result=Result.OK)
+    con.execute("INSERT INTO audit (ts, engagement, agent, action, target, phase, result, "
+                "prev, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                tuple(e[k] for k in ("ts", "engagement", "agent", "action", "target", "phase",
+                                     "result", "prev", "hash")))
+    con.commit()
+    assert "subject" not in [r[1] for r in con.execute("PRAGMA table_info(audit)")]
+    con.close()
+    assert audit_mod.verify_file(path) is None             # se lee sin la columna
+    log = audit_mod.SqliteAuditLog.open("eng-1", tmp_path)  # y se agrega al abrir
+    log.record_control("eng-1", "reviewer:ana", "hitl.approve", "h", Result.OK, subject="F-1")
+    assert log.entries[-1]["subject"] == "F-1" and "subject" not in log.entries[0]
+    log.close()
+    assert audit_mod.verify_file(path) is None

@@ -272,7 +272,7 @@ def entry_hash(entry: Entry) -> str:
 
 def make_entry(*, prev: str, engagement: str, agent: str, action: str, target: str,
                phase: str, result: Result, reason: str | None = None,
-               evidence: str | None = None) -> Entry:
+               evidence: str | None = None, subject: str | None = None) -> Entry:
     """Arma un registro con su hash. Valida motivo de bloqueo y forma de la evidencia."""
     body: Entry = {
         "ts": time.time(), "engagement": engagement, "agent": agent,
@@ -295,6 +295,10 @@ def make_entry(*, prev: str, engagement: str, agent: str, action: str, target: s
         if not EVIDENCE_RE.match(evidence) or ".." in evidence.split("/"):
             raise ValueError("la evidencia debe ser una referencia '<ruta>#sha256=<hex>'")
         body["evidence"] = evidence
+    if subject is not None:              # 006 (revisión M2): el hallazgo, si lo hay
+        if not SUBJECT_RE.match(subject):
+            raise ValueError(f"sujeto inválido: {subject!r}")
+        body["subject"] = subject
     body["hash"] = entry_hash(body)
     return body
 
@@ -330,18 +334,18 @@ class AuditLog:
 
     def record(self, agent: str, action: Action, target: str, token: ScopeToken,
                result: Result, reason: str | None = None,
-               evidence: str | None = None) -> Entry:
+               evidence: str | None = None, subject: str | None = None) -> Entry:
         return self._append(engagement=token.engagement_id, agent=agent, action=action.name,
                             target=target, phase=phase_label(token), result=result,
-                            reason=reason, evidence=evidence)
+                            reason=reason, evidence=evidence, subject=subject)
 
     def record_control(self, engagement_id: str, agent: str, action: str, target: str,
                        result: Result, reason: str | None = None,
-                       evidence: str | None = None) -> Entry:
+                       evidence: str | None = None, subject: str | None = None) -> Entry:
         """Registro de control (emisión, revocación, kill switch): fase `control`."""
         return self._append(engagement=engagement_id, agent=agent, action=action,
                             target=target, phase="control", result=result, reason=reason,
-                            evidence=evidence)
+                            evidence=evidence, subject=subject)
 
     def record_kill(self, engagement_id: str, agent: str) -> Entry:
         return self.record_control(engagement_id, agent, KILLSWITCH_ACTION, engagement_id,
@@ -365,10 +369,10 @@ class AuditSink(Protocol):
 
     def record(self, agent: str, action: Action, target: str, token: ScopeToken,
                result: Result, reason: str | None = None,
-               evidence: str | None = None) -> Entry: ...
+               evidence: str | None = None, subject: str | None = None) -> Entry: ...
     def record_control(self, engagement_id: str, agent: str, action: str, target: str,
                        result: Result, reason: str | None = None,
-                       evidence: str | None = None) -> Entry: ...
+                       evidence: str | None = None, subject: str | None = None) -> Entry: ...
     @property
     def entries(self) -> list[Entry]: ...
     def record_kill(self, engagement_id: str, agent: str) -> Entry: ...
@@ -449,27 +453,32 @@ class Harness:
                 pass
             raise
         if self.killswitch.is_engaged(token.engagement_id):
-            self.audit.record(agent, action, target, token, Result.ABORTED)
+            self.audit.record(agent, action, target, token, Result.ABORTED,
+                              subject=subject)
             raise KillSwitchEngaged()
         reason = (self.issuer.verify(token)
                   or ("token_expired" if not token.is_live() else None)
                   or self.guard.check(action, target, token))
         if reason is not None:
-            self.audit.record(agent, action, target, token, Result.BLOCKED, reason)
+            self.audit.record(agent, action, target, token, Result.BLOCKED, reason,
+                              subject=subject)
             raise ScopeViolation(f"{action.name} sobre {target} bloqueada: {reason}", reason)
         canon = normalize_target(target)
         assert canon is not None          # garantizado por guard.check
         adapter = self.tools.get(action.name)
         if adapter is None:
-            self.audit.record(agent, action, canon, token, Result.BLOCKED, "no_adapter")
+            self.audit.record(agent, action, canon, token, Result.BLOCKED, "no_adapter",
+                              subject=subject)
             raise ScopeViolation(f"capability sin adaptador registrado: {action.name}",
                                  "no_adapter")
         if token.phase not in adapter.allowed_phases:
-            self.audit.record(agent, action, canon, token, Result.BLOCKED, "adapter_phase")
+            self.audit.record(agent, action, canon, token, Result.BLOCKED, "adapter_phase",
+                              subject=subject)
             raise ScopeViolation(f"adaptador {adapter.name} no habilitado en {token.phase}",
                                  "adapter_phase")
         if getattr(adapter, "destructive", True) is not False:   # R14: lo declara el adaptador
-            self.audit.record(agent, action, canon, token, Result.BLOCKED, "destructive")
+            self.audit.record(agent, action, canon, token, Result.BLOCKED, "destructive",
+                              subject=subject)
             raise ScopeViolation(f"adaptador {adapter.name} es destructivo", "destructive")
         addresses: tuple[str, ...] = (canon,)
         if not _is_ip(canon):             # A4: el nombre debe resolver solo a IP en alcance
@@ -479,7 +488,8 @@ class Harness:
                 ips = []
             reason = self.guard.check_resolved(canon, ips, token)
             if reason is not None:
-                self.audit.record(agent, action, canon, token, Result.BLOCKED, reason)
+                self.audit.record(agent, action, canon, token, Result.BLOCKED, reason,
+                              subject=subject)
                 raise ScopeViolation(f"{canon} resuelve fuera de alcance: {reason}", reason)
             # 004: la herramienta usa estas IP y no vuelve a resolver (DNS rebinding).
             addresses = tuple(sorted({str(normalize_target(ip)) for ip in ips}))
@@ -489,16 +499,19 @@ class Harness:
                 raise ScopeViolation(f"{action.name} con gate humano sin sujeto",
                                      "missing_subject")
             if not self.guard.approved(action, canon, token, subject):
-                self.audit.record(agent, action, canon, token, Result.PENDING_HITL)
+                self.audit.record(agent, action, canon, token, Result.PENDING_HITL,
+                              subject=subject)
                 return {"status": "PENDING_HITL"}
         for address in addresses:             # puede esperar: el kill switch se mira después
             self.limiter.acquire(address)
         if self.killswitch.is_engaged(token.engagement_id):   # pudo activarse mientras tanto
-            self.audit.record(agent, action, canon, token, Result.ABORTED)
+            self.audit.record(agent, action, canon, token, Result.ABORTED,
+                              subject=subject)
             raise KillSwitchEngaged()
         # Write-ahead: la decisión OK queda en bitácora ANTES de ejecutar. Si no se puede
         # registrar (otro engagement, base bloqueada, disco lleno), la herramienta no corre.
-        self.audit.record(agent, action, canon, token, Result.OK)
+        self.audit.record(agent, action, canon, token, Result.OK,
+                              subject=subject)
         try:
             run_subject = getattr(adapter, "run_subject", None)
             if subject is not None and callable(run_subject):   # adaptador atado al hallazgo
@@ -506,6 +519,7 @@ class Harness:
                 return out
             return adapter.run(action, canon, token, addresses)
         except Exception:  # noqa: BLE001 - el OK ya está escrito: se cierra con ABORTED
-            self.audit.record(agent, action, canon, token, Result.ABORTED, "adapter_error")
+            self.audit.record(agent, action, canon, token, Result.ABORTED, "adapter_error",
+                              subject=subject)
             return {"tool": action.name, "target": canon, "status": "error",
                     "error": "adapter_error"}
